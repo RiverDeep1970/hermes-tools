@@ -6,6 +6,32 @@ from datetime import datetime, date, timedelta
 import os
 import sqlite3
 import urllib.parse
+import hashlib
+import hmac
+
+# ── Auth config ──
+APP_USER = "alexis"
+APP_PASS = "medoc2026"  # ⚠️ à changer
+PASS_HASH = hashlib.sha256(f"{APP_USER}:{APP_PASS}".encode()).hexdigest()
+SESSION_COOKIE = "medoc_session"
+SESSION_TTL = 60 * 60 * 24  # 24h
+
+# Sessions stockées en mémoire (id -> timestamp)
+SESSIONS = {}
+
+def check_auth(self, is_api=False):
+    """Vérifie si la requête est authentifiée."""
+    cookies = self.headers.get('Cookie', '')
+    if SESSION_COOKIE in cookies:
+        # Extraire le session id
+        for c in cookies.split(';'):
+            c = c.strip()
+            if c.startswith(SESSION_COOKIE + '='):
+                sid = c.split('=', 1)[1]
+                ts = SESSIONS.get(sid)
+                if ts and (datetime.now().timestamp() - ts) < SESSION_TTL:
+                    return True
+    return False
 
 DB_PATH = os.path.expanduser("~/.hermes/med-tracker.db")
 PORT = 8081
@@ -41,48 +67,70 @@ HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>💊 Médicaments</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; padding: 20px; max-width: 500px; margin: 0 auto; }
-h1 { text-align: center; color: #333; margin-bottom: 20px; font-size: 1.5em; }
-.card { background: white; border-radius: 16px; padding: 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 20px; }
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; padding: 0; max-width: 100%; }
+/* Header fixe */
+.app-header { background: #fff; padding: 16px 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); position: sticky; top: 0; z-index: 100; }
+.app-header h1 { font-size: 1.3em; color: #333; text-align: center; }
+.logout { position: absolute; right: 16px; top: 14px; font-size: 0.85em; color: #999; text-decoration: none; padding: 6px; }
+/* Onglets - bottom nav sur mobile */
+.tabs { display: flex; background: #fff; border-bottom: 1px solid #eee; }
+.tab { flex: 1; padding: 14px 4px; text-align: center; cursor: pointer; font-weight: 600; font-size: 0.8em; color: #666; border-bottom: 3px solid transparent; }
+.tab.active { color: #007aff; border-bottom-color: #007aff; }
+/* Contenu */
+.content { padding: 16px 20px 80px; }
+.card { background: white; border-radius: 16px; padding: 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); margin-bottom: 16px; }
 h2 { font-size: 1em; color: #666; margin-bottom: 12px; }
+/* Stats header */
+.stats-row { display: flex; gap: 12px; margin-bottom: 16px; }
+.stat-box { flex: 1; background: white; border-radius: 16px; padding: 16px; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+.stat-box .num { font-size: 1.8em; font-weight: 700; color: #007aff; }
+.stat-box .lbl { font-size: 0.75em; color: #999; margin-top: 4px; }
+/* Alertes oubli */
+.alert-box { background: #fff3cd; border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; font-size: 0.9em; color: #856404; }
+.alert-box strong { color: #664d03; }
+.alert-box.today-ok { background: #d4edda; color: #155724; }
+/* Meds */
 .meal-section { margin-bottom: 20px; }
 .meal-title { font-size: 1.1em; font-weight: 600; margin-bottom: 8px; padding: 8px 0; border-bottom: 2px solid #f0f0f0; }
-.med-item { display: flex; align-items: center; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+.med-item { display: flex; align-items: center; padding: 16px 0; border-bottom: 1px solid #f0f0f0; }
 .med-item:last-child { border-bottom: none; }
-.med-item input[type="checkbox"] { width: 22px; height: 22px; margin-right: 12px; cursor: pointer; }
-.med-item label { flex: 1; font-size: 1em; cursor: pointer; }
-.med-item .dosage { color: #999; font-size: 0.85em; }
+.med-item input[type="checkbox"] { width: 28px; height: 28px; margin-right: 14px; cursor: pointer; accent-color: #007aff; }
+.med-item label { flex: 1; font-size: 1.05em; cursor: pointer; }
+.med-item .dosage { color: #999; font-size: 0.85em; display: block; }
 .med-item.taken label { text-decoration: line-through; color: #999; }
 .add-form { display: flex; gap: 8px; margin-bottom: 10px; }
-.add-form input { flex: 1; padding: 10px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 1em; }
-.add-form button { padding: 10px 16px; background: #007aff; color: white; border: none; border-radius: 10px; cursor: pointer; }
-.meal-checkboxes { display: flex; gap: 12px; margin: 8px 0; }
-.meal-checkboxes label { font-size: 0.85em; color: #666; }
+.add-form input { flex: 1; padding: 14px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 1em; }
+.add-form button { padding: 14px 16px; background: #007aff; color: white; border: none; border-radius: 10px; cursor: pointer; font-size: 1em; }
+.meal-checkboxes { display: flex; gap: 16px; margin: 10px 0; }
+.meal-checkboxes label { font-size: 0.9em; color: #666; display: flex; align-items: center; gap: 4px; }
+.meal-checkboxes input { width: 18px; height: 18px; accent-color: #007aff; }
 .med-list { list-style: none; }
-.med-list li { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
-.med-list li .del { color: #ff3b30; cursor: pointer; padding: 4px 8px; }
+.med-list li { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; border-bottom: 1px solid #f0f0f0; }
+.med-list li:last-child { border-bottom: none; }
+.med-list li .del { color: #ff3b30; cursor: pointer; padding: 8px 12px; font-size: 1.1em; }
 .med-list li .info { font-size: 0.85em; color: #999; }
 select { padding: 8px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 0.9em; }
-#status { text-align: center; margin-top: 10px; padding: 10px; border-radius: 10px; display: none; }
+#status { text-align: center; margin: 10px 0; padding: 10px; border-radius: 10px; display: none; }
 .success { background: #d4edda; color: #155724; }
 .error { background: #f8d7da; color: #721c24; }
-.tabs { display: flex; gap: 0; margin-bottom: 20px; }
-.tab { flex: 1; padding: 10px; text-align: center; cursor: pointer; border-bottom: 3px solid transparent; font-weight: 500; }
-.tab.active { border-bottom-color: #007aff; color: #007aff; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 </style>
 </head>
 <body>
-<h1>💊 Médicaments</h1>
+<div class="app-header">
+  <h1>💊 Médicaments</h1>
+  <a class="logout" href="/logout">Déconnexion</a>
+</div>
 <div class="tabs">
   <div class="tab active" data-tab="today" onclick="switchTab('today')">📋 Aujourd'hui</div>
   <div class="tab" data-tab="manage" onclick="switchTab('manage')">⚙️ Gérer</div>
   <div class="tab" data-tab="history" onclick="switchTab('history')">📅 Historique</div>
 </div>
-
+<div class="content">
 <div id="tab-today" class="tab-content active">
+  <div id="stats-header"></div>
   <div class="card" id="today-content"></div>
 </div>
 
@@ -111,6 +159,7 @@ select { padding: 8px; border: 2px solid #e0e0e0; border-radius: 8px; font-size:
 </div>
 
 <div id="status"></div>
+</div>
 
 <script>
 function switchTab(name) {
@@ -124,12 +173,14 @@ function switchTab(name) {
 }
 
 async function loadToday() {
-  const resp = await fetch('/api/today');
+  const resp = await fetch('/api/today?_=' + Date.now());
   const data = await resp.json();
   const meals = { morning: '🌅 Matin', midday: '🌞 Midi', evening: '🌙 Soir' };
   let html = '<h2>📅 ' + data.date + '</h2>';
+  let hasItems = false;
   for (const [meal, label] of Object.entries(meals)) {
     if (!data[meal] || !data[meal].length) continue;
+    hasItems = true;
     html += '<div class="meal-section"><div class="meal-title">' + label + '</div>';
     for (const m of data[meal]) {
       html += '<div class="med-item' + (m.taken ? ' taken' : '') + '">';
@@ -139,8 +190,32 @@ async function loadToday() {
     }
     html += '</div>';
   }
-  if (!html.includes('med-item')) html += '<p style="color:#999;text-align:center">Aucun medicament pour aujourd hui</p>';
+  if (!hasItems) html += '<p style="color:#999;text-align:center">Aucun medicament pour aujourd hui</p>';
   document.getElementById('today-content').innerHTML = html;
+  loadStats();
+}
+
+async function loadStats() {
+  const resp = await fetch('/api/stats?_=' + Date.now());
+  const data = await resp.json();
+  const mealLbl = { morning: 'matin', midday: 'midi', evening: 'soir' };
+
+  let html = '<div class="stats-row">';
+  html += '<div class="stat-box"><div class="num">🔥 ' + data.streak + '</div><div class="lbl">jours sans oubli</div></div>';
+  html += '<div class="stat-box"><div class="num">' + data.today.taken + '/' + data.today.due + '</div><div class="lbl">pris aujourd hui</div></div>';
+  html += '</div>';
+
+  if (data.missed && data.missed.length > 0) {
+    html += '<div class="alert-box"><strong>⚠️ Prise(s) oubliée(s) :</strong><br>';
+    for (const m of data.missed) {
+      html += '• ' + m.med + ' (' + mealLbl[m.meal] + ')<br>';
+    }
+    html += '</div>';
+  } else if (data.today.taken >= data.today.due) {
+    html += '<div class="alert-box today-ok">✅ Toutes les prises du jour sont effectuées !</div>';
+  }
+
+  document.getElementById('stats-header').innerHTML = html;
 }
 
 async function toggleMed(id, meal, el) {
@@ -206,9 +281,53 @@ loadToday();
 </body>
 </html>"""
 
+# ── Page de login ──
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🔐 Connexion - Médicaments</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:#f5f5f5; height:100vh; display:flex; align-items:center; justify-content:center; }
+.login-card { background:white; border-radius:16px; padding:30px; box-shadow:0 2px 12px rgba(0,0,0,0.08); width:320px; }
+h1 { font-size:1.3em; text-align:center; margin-bottom:20px; color:#333; }
+input { width:100%; padding:12px; border:2px solid #e0e0e0; border-radius:10px; font-size:1em; margin-bottom:12px; }
+button { width:100%; padding:12px; background:#007aff; color:white; border:none; border-radius:10px; font-size:1em; cursor:pointer; }
+button:hover { background:#0056b3; }
+.error { color:#ff3b30; text-align:center; margin-top:12px; font-size:0.9em; }
+</style>
+</head>
+<body>
+<div class="login-card">
+<h1>💊 Médicaments</h1>
+<form method="POST" action="/login">
+  <input type="text" name="username" placeholder="Utilisateur" required>
+  <input type="password" name="password" placeholder="Mot de passe" required>
+  <button type="submit">Se connecter</button>
+</form>
+<div class="error" id="error"></div>
+</div>
+</body>
+</html>"""
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/api/today':
+        if self.path == '/login':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(LOGIN_HTML.encode())
+        elif self.path == '/logout':
+            self._logout()
+        elif not check_auth(self):
+            # Not authenticated -> redirect to login
+            self.send_response(302)
+            self.send_header('Location', '/login')
+            self.end_headers()
+        elif self.path.startswith('/api/today'):
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             today = date.today().isoformat()
@@ -222,7 +341,48 @@ class Handler(BaseHTTPRequestHandler):
                 if m[5]: result["evening"].append(entry)
             conn.close()
             self._json(result)
-        elif self.path == '/api/history':
+        elif self.path.startswith('/api/stats'):
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            today = date.today().isoformat()
+
+            # Current streak: count consecutive days (backwards) where all due meds were taken
+            meds_all = c.execute("SELECT id, morning, midday, evening FROM meds WHERE active=1").fetchall()
+            streak = 0
+            for offset in range(0, 365):
+                d = (date.today() - timedelta(days=offset)).isoformat()
+                taken = {r[0] for r in c.execute("SELECT med_id FROM intakes WHERE taken_date=?", (d,))}
+                # Check if all due meds were taken on that day
+                all_taken = all(m[0] in taken for m in meds_all)
+                if all_taken:
+                    streak += 1
+                else:
+                    break
+
+            # Today's taken progress
+            meds_today = c.execute("SELECT id, morning, midday, evening FROM meds WHERE active=1").fetchall()
+            taken_today = {r[0] for r in c.execute("SELECT med_id FROM intakes WHERE taken_date=?", (today,))}
+            total_due = sum(1 for m in meds_today for _ in range(m[1]+m[2]+m[3]))
+            total_taken = sum(1 for m in meds_today if m[0] in taken_today)
+
+            # Missed alerts (due at past meals today, not taken)
+            now_hour = datetime.now().hour
+            missed = []
+            meal_order = [("morning", 8), ("midday", 12), ("evening", 19)]
+            for meal, meal_hour in meal_order:
+                if now_hour >= meal_hour:
+                    for m in meds_today:
+                        if m[{"morning":1,"midday":2,"evening":3}[meal]] and m[0] not in taken_today:
+                            name = c.execute("SELECT name FROM meds WHERE id=?", (m[0],)).fetchone()[0]
+                            missed.append({"med": name, "meal": meal})
+
+            conn.close()
+            self._json({
+                "streak": streak,
+                "today": {"taken": total_taken, "due": max(total_due, 1)},
+                "missed": missed
+            })
+        elif self.path.startswith('/api/history'):
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             today = date.today()
@@ -236,7 +396,7 @@ class Handler(BaseHTTPRequestHandler):
                 days.append({"date": ds, "intakes": [{"meal": r[0], "name": r[1], "taken": 1} for r in intakes]})
             conn.close()
             self._json({"days": days})
-        elif self.path == '/api/meds':
+        elif self.path.startswith('/api/meds'):
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             meds = [{"id":r[0],"name":r[1],"dosage":r[2],"morning":r[3],"midday":r[4],"evening":r[5]} for r in c.execute("SELECT id,name,dosage,morning,midday,evening FROM meds WHERE active=1 ORDER BY name")]
@@ -250,11 +410,47 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers['Content-Length'])
-        body = json.loads(self.rfile.read(length))
+        body_raw = self.rfile.read(length)
+
+        # Login form (x-www-form-urlencoded)
+        if self.path == '/login':
+            content_type = self.headers.get('Content-Type', '')
+            if 'json' in content_type:
+                body = json.loads(body_raw)
+                user = body.get('username', '')
+                pwd = body.get('password', '')
+            else:
+                params = urllib.parse.parse_qs(body_raw.decode())
+                user = params.get('username', [''])[0]
+                pwd = params.get('password', [''])[0]
+
+            if hashlib.sha256(f"{user}:{pwd}".encode()).hexdigest() == PASS_HASH:
+                import uuid
+                sid = uuid.uuid4().hex
+                SESSIONS[sid] = datetime.now().timestamp()
+                self.send_response(302)
+                self.send_header('Location', '/')
+                self.send_header('Set-Cookie', f'{SESSION_COOKIE}={sid}; Path=/; Max-Age=86400; HttpOnly')
+                self.end_headers()
+            else:
+                self.send_response(302)
+                self.send_header('Location', '/login?error=1')
+                self.end_headers()
+            return
+
+        # API protection
+        if not check_auth(self):
+            self.send_response(401)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Non authentifié"}).encode())
+            return
+
+        body = json.loads(body_raw)
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
-        if self.path == '/api/toggle':
+        if self.path.startswith('/api/toggle'):
             today = date.today().isoformat()
             if body.get("taken"):
                 c.execute("INSERT INTO intakes (med_id, meal, taken_date) VALUES (?,?,?)", (body["id"], body["meal"], today))
@@ -263,22 +459,35 @@ class Handler(BaseHTTPRequestHandler):
             conn.commit()
             self._json({"ok":True})
 
-        elif self.path == '/api/add':
+        elif self.path.startswith('/api/add'):
             c.execute("INSERT INTO meds (name, dosage, morning, midday, evening) VALUES (?,?,?,?,?)",
                 (body["name"], body.get("dosage",""), body.get("morning",1), body.get("midday",1), body.get("evening",1)))
             conn.commit()
             self._json({"ok":True})
 
-        elif self.path == '/api/delete':
+        elif self.path.startswith('/api/delete'):
             c.execute("UPDATE meds SET active=0 WHERE id=?", (body["id"],))
             conn.commit()
             self._json({"ok":True})
 
         conn.close()
 
+    def _logout(self):
+        cookies = self.headers.get('Cookie', '')
+        for c in cookies.split(';'):
+            c = c.strip()
+            if c.startswith(SESSION_COOKIE + '='):
+                sid = c.split('=', 1)[1]
+                SESSIONS.pop(sid, None)
+        self.send_response(302)
+        self.send_header('Location', '/login')
+        self.send_header('Set-Cookie', f'{SESSION_COOKIE}=; Path=/; Max-Age=0')
+        self.end_headers()
+
     def _json(self, data):
         self.send_response(200)
-        self.send_header('Content-Type','application/json')
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 

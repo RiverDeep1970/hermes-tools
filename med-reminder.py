@@ -6,7 +6,7 @@ import sys
 
 MEAL = sys.argv[1] if len(sys.argv) > 1 else "morning"
 MEAL_EMOJI = {"morning": "🌅 Matin", "midday": "🌞 Midi", "evening": "🌙 Soir"}
-MEAL_URL = {"morning": "https://dust-centers-default-believes.trycloudflare.com", "midday": "https://dust-centers-default-believes.trycloudflare.com", "evening": "https://dust-centers-default-believes.trycloudflare.com"}
+MEAL_URL = {"morning": "https://mood.riverdeep1970.xyz", "midday": "https://mood.riverdeep1970.xyz", "evening": "https://mood.riverdeep1970.xyz"}
 
 DB = os.path.expanduser("~/.hermes/med-tracker.db")
 CHAT_ID = "8126578200"
