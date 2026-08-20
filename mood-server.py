@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Serveur web mood tracker — accessible via SSH forward."""
+"""Serveur web mood tracker — version améliorée."""
 import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import os
 import urllib.parse
 
@@ -13,154 +13,243 @@ HTML = """<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📓 Mood Tracker</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>📓 Mood</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; padding: 20px; max-width: 500px; margin: 0 auto; }
-h1 { text-align: center; color: #333; margin-bottom: 20px; font-size: 1.5em; }
-.card { background: white; border-radius: 16px; padding: 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 20px; }
-h2 { font-size: 1em; color: #666; margin-bottom: 12px; }
-.moods { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.mood-btn { padding: 14px; border: 2px solid #e0e0e0; border-radius: 12px; background: white; font-size: 1em; cursor: pointer; transition: all 0.2s; text-align: center; }
-.mood-btn:hover { border-color: #007aff; background: #f0f7ff; }
-.mood-btn.selected { border-color: #007aff; background: #007aff; color: white; }
-.mood-btn .emoji { font-size: 1.5em; display: block; margin-bottom: 4px; }
-.mood-btn .label { font-size: 0.85em; }
-input, textarea { width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 1em; margin-bottom: 10px; }
-textarea { resize: vertical; min-height: 60px; }
-.submit-btn { width: 100%; padding: 14px; background: #007aff; color: white; border: none; border-radius: 12px; font-size: 1.1em; cursor: pointer; }
-.submit-btn:hover { background: #0056b3; }
-#status { text-align: center; margin-top: 10px; padding: 10px; border-radius: 10px; display: none; }
-.success { background: #d4edda; color: #155724; }
-.error { background: #f8d7da; color: #721c24; }
-.history { margin-top: 10px; }
-.history-item { padding: 8px 0; border-bottom: 1px solid #eee; font-size: 0.9em; color: #555; }
-.history-item .hdate { color: #999; font-size: 0.8em; }
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f7;padding:0;max-width:100%;min-height:100dvh}
+/* Header */
+.hdr{background:#fff;padding:14px 20px;box-shadow:0 1px 4px rgba(0,0,0,0.06);position:sticky;top:0;z-index:100}
+.hdr h1{font-size:1.2em;color:#333;text-align:center}
+/* Contenu */
+.c{padding:14px 16px;max-width:500px;margin:0 auto}
+.card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 1px 8px rgba(0,0,0,0.05);margin-bottom:16px}
+h2{font-size:.9em;color:#888;margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+/* Mood: 4x2 avec touches larges */
+.moods{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px}
+.mb{padding:12px 4px;border:2px solid #e8e8ed;border-radius:14px;background:#fafafa;cursor:pointer;text-align:center;transition:all .2s}
+.mb .e{font-size:1.6em;display:block;line-height:1.2}
+.mb .l{font-size:.7em;color:#888;display:block;margin-top:2px}
+.mb:active{transform:scale(.95)}
+.mb.sel{border-color:#007aff;background:#e8f0ff}
+.mb.sel .l{color:#007aff;font-weight:600}
+.mb.used{border-color:#34c759;background:#e8ffe8}
+/* Champs */
+.field{width:100%;padding:12px 14px;border:2px solid #e8e8ed;border-radius:12px;font-size:1em;margin-bottom:8px;background:#fafafa;transition:border .2s}
+.field:focus{border-color:#007aff;outline:none;background:#fff}
+textarea.field{resize:vertical;min-height:50px;font-family:inherit}
+/* Quick activités */
+.quick{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.qb{padding:6px 14px;border:2px solid #e8e8ed;border-radius:20px;background:#fafafa;font-size:.85em;cursor:pointer;transition:all .2s}
+.qb:active{transform:scale(.95)}
+.qb.sel{border-color:#34c759;background:#e8ffe8;color:#155724;font-weight:500}
+/* Bouton */
+.sb{width:100%;padding:14px;background:#007aff;color:#fff;border:none;border-radius:12px;font-size:1.1em;font-weight:600;cursor:pointer;transition:opacity .2s}
+.sb:active{opacity:.8}
+.sb:disabled{opacity:.4}
+#st{text-align:center;padding:10px;border-radius:10px;display:none;font-size:.85em;margin-top:10px}
+.succ{background:#d4edda;color:#155724;display:block!important}
+.err{background:#f8d7da;color:#721c24;display:block!important}
+/* Historique visuel */
+.hw{display:flex;gap:6px;justify-content:center;padding:8px 0}
+.hd{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.hl{font-size:9px;color:#999;margin-top:2px;text-align:center}
+.hc{display:flex;flex-direction:column;align-items:center}
+/* Détail jour */
+.hp{padding:8px 0;border-bottom:1px solid #f0f0f0;display:flex;gap:10px;align-items:flex-start}
+.hp:last-child{border:none}
+.hp .d{font-size:.8em;color:#999;min-width:36px}
+.hp .t{font-size:.9em;color:#333;flex:1}
+.hp .t .s{color:#888;font-size:.8em}
+@media(max-width:380px){.moods{grid-template-columns:repeat(4,1fr);gap:6px}.mb{padding:10px 2px}.mb .e{font-size:1.3em}}
 </style>
 </head>
 <body>
-<h1>📓 Bilan du jour</h1>
+<div class="hdr"><h1>📓 Bilan du jour</h1></div>
+<div class="c">
 <div class="card">
   <h2>😊 Humeur</h2>
-  <div class="moods" id="moods">
-    <div class="mood-btn" data-value="1" onclick="selectMood(this)"><span class="emoji">😞</span><span class="label">Mal</span></div>
-    <div class="mood-btn" data-value="2" onclick="selectMood(this)"><span class="emoji">😐</span><span class="label">Bof</span></div>
-    <div class="mood-btn" data-value="3" onclick="selectMood(this)"><span class="emoji">🙂</span><span class="label">Bien</span></div>
-    <div class="mood-btn" data-value="4" onclick="selectMood(this)"><span class="emoji">😄</span><span class="label">Super</span></div>
-    <div class="mood-btn" data-value="5" onclick="selectMood(this)"><span class="emoji">😴</span><span class="label">Fatigué</span></div>
-    <div class="mood-btn" data-value="6" onclick="selectMood(this)"><span class="emoji">🤒</span><span class="label">Malade</span></div>
-    <div class="mood-btn" data-value="7" onclick="selectMood(this)"><span class="emoji">😰</span><span class="label">Stressé</span></div>
-    <div class="mood-btn" data-value="8" onclick="selectMood(this)"><span class="emoji">🚀</span><span class="label">Motivé</span></div>
-  </div>
+  <div class="moods" id="moods"></div>
+</div>
+<div class="card" id="entry-card">
+  <h2>📝 Détails</h2>
+  <input class="field" id="lecture" placeholder="📚 Lecture (ex: Dune p.45)">
+  <input class="field" id="serie" placeholder="📺 Série (ex: Silo S3E4)">
+  <div class="quick" id="quick-act"></div>
+  <textarea class="field" id="notes" placeholder="Notes libres..."></textarea>
+  <button class="sb" id="sb" onclick="save()">✅ Enregistrer</button>
+  <div id="st"></div>
 </div>
 <div class="card">
-  <h2>📝 Détails (optionnel)</h2>
-  <input type="text" id="lecture" placeholder="📚 Lecture (ex: Dune p.45)">
-  <input type="text" id="serie" placeholder="📺 Série (ex: Silo S3E4)">
-  <input type="text" id="activite" placeholder="🏃 Activité (ex: Vélo 30min)">
-  <textarea id="notes" placeholder="📝 Notes libres..."></textarea>
-  <button class="submit-btn" onclick="submitMood()">✅ Envoyer</button>
-  <div id="status"></div>
+  <h2>📅 7 derniers jours</h2>
+  <div id="trend"></div>
+  <div id="hist"></div>
 </div>
-<div class="card">
-  <h2>📅 Derniers jours</h2>
-  <div class="history" id="history"></div>
 </div>
 <script>
-let selectedMood = null;
-function selectMood(el) {
-  document.querySelectorAll('.mood-btn').forEach(b => b.classList.remove('selected'));
-  el.classList.add('selected');
-  selectedMood = el.dataset.value;
+const ML=[
+  {v:"1",e:"😞",l:"Mal"},{v:"2",e:"😐",l:"Bof"},{v:"3",e:"🙂",l:"Bien"},{v:"4",e:"😄",l:"Super"},
+  {v:"5",e:"😴",l:"Fatigué"},{v:"6",e:"🤒",l:"Malade"},{v:"7",e:"😰",l:"Stressé"},{v:"8",e:"🚀",l:"Motivé"}
+];
+const ACT=["📖 Lecture","📺 Série","🏃 Sport","🎵 Musique","🍳 Cuisine","🌿 Promenade"];
+const EM={1:"😞",2:"😐",3:"🙂",4:"😄",5:"😴",6:"🤒",7:"😰",8:"🚀"};
+let sel=null, sact=[];
+
+// Rendu moods
+(function(){
+  let h='';
+  for(const m of ML) h+='<div class="mb" data-v="'+m.v+'" onclick="pick(this)"><span class="e">'+m.e+'</span><span class="l">'+m.l+'</span></div>';
+  document.getElementById('moods').innerHTML=h;
+})();
+
+// Quick activités
+(function(){
+  let h='';
+  for(const a of ACT) h+='<div class="qb" onclick="togAct(this)">'+a+'</div>';
+  document.getElementById('quick-act').innerHTML=h;
+})();
+
+function pick(el){
+  document.querySelectorAll('.mb').forEach(b=>b.classList.remove('sel'));
+  el.classList.add('sel'); sel=el.dataset.v;
 }
-async function submitMood() {
-  if (!selectedMood) { showStatus('Sélectionne une humeur !', 'error'); return; }
-  const data = { mood: selectedMood, lecture: document.getElementById('lecture').value, serie: document.getElementById('serie').value, activite: document.getElementById('activite').value, notes: document.getElementById('notes').value };
-  const resp = await fetch('/save', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
-  const result = await resp.json();
-  if (result.ok) { showStatus('✅ Enregistré !', 'success'); loadHistory(); }
-  else { showStatus('❌ Erreur', 'error'); }
+function togAct(el){
+  el.classList.toggle('sel');
+  const t=el.textContent.trim();
+  sact=sact.includes(t)?sact.filter(x=>x!==t):[...sact,t];
 }
-function showStatus(msg, type) {
-  const s = document.getElementById('status'); s.textContent = msg; s.className = type; s.style.display = 'block';
-  setTimeout(() => s.style.display = 'none', 3000);
+
+async function save(){
+  if(!sel){document.getElementById('st').className='err';document.getElementById('st').textContent='Choisis une humeur !';return}
+  document.getElementById('sb').disabled=true;
+  const d={mood:sel,lecture:document.getElementById('lecture').value.trim(),serie:document.getElementById('serie').value.trim(),activite:sact.join(', '),notes:document.getElementById('notes').value.trim()};
+  try{
+    const r=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
+    const j=await r.json();
+    if(j.ok){document.getElementById('st').className='succ';document.getElementById('st').textContent='✅ Enregistré !';loadAll()}
+    else throw Error();
+  }catch(e){document.getElementById('st').className='err';document.getElementById('st').textContent='❌ Erreur'}
+  setTimeout(()=>document.getElementById('st').className='st',3000);
+  document.getElementById('sb').disabled=false;
 }
-async function loadHistory() {
-  const resp = await fetch('/history');
-  const data = await resp.json();
-  const h = document.getElementById('history');
-  h.innerHTML = data.entries.map(e => '<div class="history-item"><span class="hdate">' + e.date + '</span> — ' + e.mood + (e.note ? ' — ' + e.note : '') + '</div>').join('');
+
+async function loadAll(){
+  const r=await fetch('/data');
+  const d=await r.json();
+  
+  // Trend (7 dots)
+  let h='<div class="hw">';
+  for(const day of d.trend){
+    const cl=day.m?EM[day.m]||'—':'—';
+    const bg=day.m?{1:'#ff6b6b',2:'#ffa94d',3:'#74b816',4:'#2b8a3e',5:'#748ffc',6:'#da77f2',7:'#f06595',8:'#ffd43b'}[day.m]||'#ccc':'#e8e8ed';
+    h+='<div class="hc"><div class="hd" style="background:'+bg+'">'+cl+'</div><div class="hl">'+day.d.slice(5)+'</div></div>';
+  }
+  h+='</div>';
+  document.getElementById('trend').innerHTML=h;
+  
+  // Détail des entrées
+  let h2='';
+  for(const e of d.entries){
+    const ei=EM[e.m]||'—';
+    h2+='<div class="hp"><div class="d">'+e.date.slice(5)+'</div><div class="t">'+ei+' '+e.text+(e.note?'<br><span class="s">'+e.note+'</span>':'')+'</div></div>';
+  }
+  document.getElementById('hist').innerHTML=h2||'<div style="color:#999;text-align:center;padding:10px">Aucune entrée</div>';
+  
+  // Highlight today's mood if exists
+  if(d.today){
+    sel=d.today.m;
+    document.querySelectorAll('.mb').forEach(b=>{if(b.dataset.v===d.today.m)b.classList.add('sel')});
+  }
 }
-loadHistory();
+loadAll();
 </script>
-</body>
-</html>"""
+</body></html>"""
 
 MOOD_LABELS = {"1":"Mal","2":"Bof","3":"Bien","4":"Super","5":"Fatigué","6":"Malade","7":"Stressé","8":"Motivé"}
+EMOJI = {"1":"😞","2":"😐","3":"🙂","4":"😄","5":"😴","6":"🤒","7":"😰","8":"🚀"}
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/history':
+        if self.path == '/data':
             entries = []
-            for fname in sorted(os.listdir(ENTRIES_DIR), reverse=True)[:7]:
-                if not fname.endswith('.json'): continue
-                with open(os.path.join(ENTRIES_DIR, fname)) as f:
-                    try:
-                        e = json.load(f)
-                        entries.append({"date": e.get("date",""), "mood": MOOD_LABELS.get(e.get("mood",""),""), "note": e.get("note","") or e.get("lecture","") or e.get("serie","")})
-                    except: pass
-            self.send_response(200)
-            self.send_header('Content-Type','application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"entries": entries}).encode())
+            trend = []
+            today = date.today()
+            today_data = None
+            for i in range(6, -1, -1):
+                d = today - timedelta(days=i)
+                fname = d.isoformat() + ".json"
+                fpath = os.path.join(ENTRIES_DIR, fname)
+                day_info = {"d": d.isoformat(), "m": None}
+                if os.path.exists(fpath):
+                    with open(fpath) as f:
+                        try:
+                            e = json.load(f)
+                            m = e.get("mood", "")
+                            day_info["m"] = int(m) if m else None
+                            # Build entry text
+                            parts = []
+                            if e.get("lecture"): parts.append("📚 " + e["lecture"])
+                            if e.get("serie"): parts.append("📺 " + e["serie"])
+                            if e.get("activite"): parts.append("🏃 " + e["activite"])
+                            text = " — ".join(parts) if parts else ""
+                            entries.append({
+                                "date": d.isoformat(),
+                                "m": int(m) if m else 0,
+                                "text": text,
+                                "note": e.get("note", "")
+                            })
+                            if d == today:
+                                today_data = {"m": int(m) if m else 0, "lecture": e.get("lecture",""), "serie": e.get("serie",""), "activite": e.get("activite",""), "notes": e.get("note","")}
+                        except: pass
+                trend.append(day_info)
+            self._json({"entries": entries[:7], "trend": trend, "today": today_data})
         else:
-            self.send_response(200)
-            self.send_header('Content-Type','text/html; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(HTML.encode())
+            self._html(HTML)
 
     def do_POST(self):
         if self.path == '/save':
             length = int(self.headers['Content-Length'])
             body = json.loads(self.rfile.read(length))
             now = datetime.now()
-            date = now.strftime("%Y-%m-%d")
-            fpath = os.path.join(ENTRIES_DIR, f"{date}.json")
+            date_str = now.strftime("%Y-%m-%d")
+            fpath = os.path.join(ENTRIES_DIR, f"{date_str}.json")
 
-            entry = {"date": date, "mood": body.get("mood",""), "mood_label": MOOD_LABELS.get(body.get("mood",""),"")}
+            entry = {"date": date_str, "mood": body.get("mood",""), "mood_label": MOOD_LABELS.get(body.get("mood",""),"")}
             if body.get("lecture"): entry["lecture"] = body["lecture"]
             if body.get("serie"): entry["serie"] = body["serie"]
             if body.get("activite"): entry["activite"] = body["activite"]
             notes = body.get("notes","") or ""
 
-            # Merge with existing (preserve old fields not sent by form)
             if os.path.exists(fpath):
                 with open(fpath) as f:
                     existing = json.load(f)
-                    # Preserve existing fields if form didn't send them
-                    if not body.get("lecture") and existing.get("lecture"):
-                        entry["lecture"] = existing["lecture"]
-                    if not body.get("serie") and existing.get("serie"):
-                        entry["serie"] = existing["serie"]
-                    if not body.get("activite") and existing.get("activite"):
-                        entry["activite"] = existing["activite"]
+                    if not body.get("lecture") and existing.get("lecture"): entry["lecture"] = existing["lecture"]
+                    if not body.get("serie") and existing.get("serie"): entry["serie"] = existing["serie"]
+                    if not body.get("activite") and existing.get("activite"): entry["activite"] = existing["activite"]
                     if existing.get("note"): notes = existing["note"] + ("; " + notes if notes else "")
             entry["note"] = notes
 
             with open(fpath, "w") as f:
                 json.dump(entry, f)
 
-            self.send_response(200)
-            self.send_header('Content-Type','application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({"ok": True}).encode())
+            self._json({"ok": True})
 
-    def log_message(self, format, *args):
-        pass  # Silence logs
+    def _json(self, data):
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+
+    def _html(self, h):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(h.encode())
+
+    def log_message(self, *a): pass
 
 PORT = 8080
 print(f"🌐 Mood Tracker: http://localhost:{PORT}")
-print(f"🔌 SSH: ssh -L {PORT}:localhost:{PORT} ubuntu@<IP_VM>")
-print("   Puis ouvrir http://localhost:8080 dans ton navigateur")
 HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
