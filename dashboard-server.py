@@ -32,6 +32,7 @@ def sys_data():
         import psutil
         cpu = psutil.cpu_percent(interval=0.5)
         mem = psutil.virtual_memory()
+        swap = psutil.swap_memory()
         disk = psutil.disk_usage('/')
         boot = datetime.fromtimestamp(psutil.boot_time())
         up = int((datetime.now() - boot).total_seconds())
@@ -40,6 +41,7 @@ def sys_data():
         load = psutil.getloadavg()
         return {
             "cpu": cpu, "ram_pct": mem.percent, "ram_u": mem.used, "ram_t": mem.total,
+            "swap_pct": swap.percent, "swap_u": swap.used, "swap_t": swap.total,
             "disk_pct": disk.percent, "disk_u": disk.used, "disk_t": disk.total, "disk_f": disk.free,
             "cores": psutil.cpu_count(), "uptime": up,
             "load": [round(l,2) for l in load],
@@ -49,26 +51,42 @@ def sys_data():
             "host": os.uname().nodename,
             "procs": procs
         }
-    except: return {"cpu":0,"ram_pct":0,"ram_u":0,"ram_t":1,"disk_pct":0,"disk_u":0,"disk_t":1,"cores":0,"uptime":0,"load":[0,0,0],"net_s":0,"net_r":0,"conns":0,"procs_total":0,"host":"?","procs":[]}
+    except: return {"cpu":0,"ram_pct":0,"ram_u":0,"ram_t":1,"swap_pct":0,"swap_u":0,"swap_t":1,"disk_pct":0,"disk_u":0,"disk_t":1,"cores":0,"uptime":0,"load":[0,0,0],"net_s":0,"net_r":0,"conns":0,"procs_total":0,"host":"?","procs":[]}
 
 def token_history():
-    """Daily token usage for last 7 days for sparklines."""
+    """Daily token usage for last 7 days."""
     try:
         conn = sqlite3.connect(os.path.join(HERMES, "state.db"))
         cur = conn.cursor()
         now = datetime.now()
+        week_ago = (now - timedelta(days=7)).timestamp()
+        cur.execute("""SELECT strftime('%Y-%m-%d', datetime(started_at, 'unixepoch')) as day,
+                       COALESCE(SUM(input_tokens+output_tokens),0),
+                       COALESCE(SUM(estimated_cost_usd),0)
+                       FROM sessions WHERE started_at >= ? GROUP BY day ORDER BY day""", (week_ago,))
+        rows = cur.fetchall()
+        conn.close()
         days = []
         for i in range(6, -1, -1):
             d = (now - timedelta(days=i)).strftime("%Y-%m-%d")
-            start = datetime.strptime(d, "%Y-%m-%d").timestamp()
-            end = start + 86400
-            cur.execute("SELECT COALESCE(SUM(input_tokens+output_tokens),0), COALESCE(SUM(estimated_cost_usd),0) FROM sessions WHERE started_at >= ? AND started_at < ?", (start, end))
-            tok, cost = cur.fetchone()
-            days.append({"d": d, "t": tok or 0, "c": cost or 0})
-        conn.close()
+            match = [r for r in rows if r[0] == d]
+            if match:
+                days.append({"d": d, "t": match[0][1] or 0, "c": match[0][2] or 0})
+            else:
+                days.append({"d": d, "t": 0, "c": 0})
         return days
     except:
         return [{"d":"-","t":0,"c":0} for _ in range(7)]
+
+def mem_history():
+    """RAM + swap history (48 dernieres points = 8 jours)."""
+    try:
+        fp = os.path.join(HERMES, "mem-log.json")
+        if not os.path.exists(fp): return []
+        with open(fp) as f:
+            data = json.load(f)
+        return data[-48:]  # keep last 48 entries
+    except: return []
 
 def usage_data():
     try:
@@ -164,112 +182,97 @@ td:last-child{text-align:right}
 .jr:last-child{border-bottom:none}
 /* Sparkline tooltip */
 .spark-wrap{position:relative;display:inline-block}
+.jr{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--c3);font-size:.82em}
+.jr:last-child{border-bottom:none}
+.st{font-size:.75em;color:var(--m);margin:14px 0 8px;display:flex;align-items:center;gap:6px;text-transform:uppercase;letter-spacing:.5px}
+.st::after{content:'';flex:1;height:1px;background:var(--c3)}
+/* Metrique */
+.mc{background:var(--c2);border:1px solid var(--c3);border-radius:8px;padding:10px;text-align:center}
+.mc .n{font-size:1.2em;font-weight:700}
+.mc .l{font-size:.65em;color:var(--m);margin-top:3px}
+.mc .bar{height:3px;background:var(--c3);border-radius:2px;margin-top:5px;overflow:hidden}
+.mc .bar .f{height:100%;border-radius:2px}
 /* Responsive */
 @media(max-width:900px){.g3{grid-template-columns:1fr}.g2{grid-template-columns:1fr}}
+@media(max-width:480px){.mem-chart{display:none}}
 </style></head>
 <body>
 <div class="hdr"><h1><span class="dot" id="dot"></span> ⚡ Dashboard</h1><a class="logout" href="/logout">Déconnexion</a></div>
 <div class="app" id="app">Chargement...</div>
 <script>
-function spark(vals, w=120, h=30, color='#00d4ff', max){
-  if(!vals||!vals.length)return'';
-  const m=max||Math.max(...vals,1);
-  const pts=vals.map((v,i)=>`${(i/(vals.length-1))*w},${h-(v/m)*h}`).join(' ');
-  const fill=vals.map((v,i)=>`${(i/(vals.length-1))*w},${h-(v/m)*h}`).join(' ');
-  return`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"/><polygon points="0,${h} ${fill} ${w},${h}" fill="${color}" fill-opacity="0.08"/></svg>`;
-}
+(function(){
+  var APP=document.getElementById('app');
+  function fmt(b){for(var u of['B','KB','MB','GB','TB']){if(b<1024)return b.toFixed(1)+' '+u;b/=1024}return b.toFixed(1)+' PB'}
+  function up(s){var d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return(d?d+'j ':'')+(h?h+'h ':'')+m+'m'}
+  function T(n){if(n>=1e6)return(n/1e6).toFixed(1)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return String(n)}
 
-async function load(){
-  const r=await fetch('/api/data?_='+Date.now());
-  const d=await r.json();
-  const s=d.sys,u=d.usage,h=d.hermes,hist=d.history||[];
-  document.getElementById('dot').style.background=s.cpu>80?'var(--r)':s.cpu>50?'var(--y)':'var(--g)';
+  function load(){
+    var x=new XMLHttpRequest();
+    x.open('GET','/api/data?_='+Date.now(),true);
+    x.timeout=8000;
+    x.onload=function(){
+      try{
+        var d=JSON.parse(x.responseText);
+        var s=d.sys,u=d.usage,h=d.hermes,mem=d.mem||[];
+        document.getElementById('dot').style.background=s.cpu>80?'#ef4444':s.cpu>50?'#eab308':'#22c55e';
+        var html='';
+        // Stats row - 6 cartes (swap ajouté)
+        html+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">';
+        html+=B(s.cpu+'%','CPU',s.cpu);html+=B(fmt(s.ram_u)+'/'+fmt(s.ram_t),'RAM',s.ram_pct);
+        html+=B(s.disk_pct+'%','Disque',s.disk_pct);
+        if(s.swap_t>0){html+=B(fmt(s.swap_u)+'/'+fmt(s.swap_t),'Swap',s.swap_pct);}
+        else{html+=B('0','Swap',0);}
+        html+=B(T(u.d.t),'Tokens');html+=B(T(u.d.c)+'$','Coût');
+        html+='</div>';
+        // Graphe RAM + Swap (visible sur tablette+)
+        if(mem.length>=2){
+          html+='<div class="mem-chart" style="background:var(--c2);border:1px solid var(--c3);border-radius:10px;padding:14px;margin-bottom:10px">';
+          html+='<div style="font-size:.75em;color:var(--m);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">📊 RAM &amp; Swap (4h)</div>';
+          html+='<div style="display:flex;align-items:end;gap:2px;height:100px;padding:4px 0">';
+          var maxY=Math.max.apply(null,mem.map(function(e){return Math.max(e.r,e.s,1)}));
+          for(var i=0;i<mem.length;i++){
+            var e=mem[i],rh=Math.max((e.r/maxY)*100,2),sh=Math.max((e.s/maxY)*100,2);
+            var c=rh>80?'#ef4444':rh>50?'#eab308':'#00d4ff';
+            html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;position:relative">';
+            // Swap bar (on top of RAM)
+            html+='<div style="width:100%;height:'+sh+'%;background:#7c3aed;border-radius:2px 2px 0 0;min-height:2px;opacity:0.7" title="Swap '+e.s.toFixed(0)+'%"></div>';
+            // RAM bar
+            html+='<div style="width:100%;height:'+rh+'%;background:'+c+';border-radius:0 0 2px 2px;min-height:2px" title="RAM '+e.r.toFixed(0)+'%"></div>';
+            if(i%4===0||i===mem.length-1){
+              html+='<span style="font-size:.55em;color:var(--m);margin-top:2px;white-space:nowrap">'+e.t.slice(5,10)+'</span>';
+            }
+          }
+          html+='</div><div style="display:flex;gap:12px;margin-top:6px;font-size:.7em;color:var(--m)">';
+          html+='<span><span style="display:inline-block;width:10px;height:10px;background:#00d4ff;border-radius:2px;vertical-align:middle;margin-right:4px"></span>RAM</span>';
+          html+='<span><span style="display:inline-block;width:10px;height:10px;background:#7c3aed;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Swap</span>';
+          html+='</div></div>';
+        }
+        // Services
+        html+='<div class="st">🔧 Services</div>';
+        for(var n in h.svc){
+          var sv=h.svc[n],cl=sv==='active'?'bg':'br',lb=sv==='active'?'✅':'❌';
+          html+='<div class="jr"><span>'+n+'</span><span class="b '+cl+'">'+lb+'</span></div>';}
+        // Jobs
+        html+='<div class="st">⏰ Jobs</div>';
+        for(var j of h.jobs.slice(0,15)){
+          var cl=j.s==='ok'||!j.s?'bg':j.s==='error'?'br':'by';
+          html+='<div class="jr"><span>'+j.n+'</span><span class="b '+cl+'">'+(j.s||'ok')+'</span></div>';}
+        // Infos
+        html+='<div class="st">🖥️ '+s.host+'</div><div style="font-size:.8em;color:var(--m)">';
+        html+=up(s.uptime)+' · '+u.model;
+        html+='</div>';
+        APP.innerHTML=html;
+      }catch(e){APP.innerHTML='<div style="padding:40px;text-align:center;color:#ef4444">❌ '+e.message+'</div>';}
+    };
+    x.onerror=function(){APP.innerHTML='<div style="padding:40px;text-align:center;color:#ef4444">❌ Erreur réseau. <a href="/login" style="color:#00d4ff">Reconnexion</a></div>';};
+    x.ontimeout=function(){APP.innerHTML='<div style="padding:40px;text-align:center;color:#eab308">⏱️ Timeout. <a href="/" style="color:#00d4ff">Réessayer</a></div>';};
+    x.send();
+  }
 
-  let html='';
-
-  // === Health matrix ===
-  html+='<div class="health">';
-  const health=[{n:'CPU',v:s.cpu,thr:80,c:s.cpu>80?'var(--r)':s.cpu>50?'var(--y)':'var(--g)'},
-    {n:'RAM',v:s.ram_pct,thr:85,c:s.ram_pct>85?'var(--r)':s.ram_pct>70?'var(--y)':'var(--g)'},
-    {n:'Disque',v:s.disk_pct,thr:85,c:s.disk_pct>85?'var(--r)':'var(--g)'},
-    {n:'Messages',v:u.msgs,thr:0,c:'var(--a)'}];
-  for(const x of health)html+=`<div class="hitem"><span class="hdot" style="background:${x.c}"></span>${x.n} ${x.v}${x.v>1&&x.n!='Messages'?'%':''}</div>`;
-  html+='</div>';
-
-  // === 3-col grid: System / LLM / Services ===
-  html+='<div class="g3">';
-
-  // COL 1: System metrics
-  html+='<div class="c"><div class="ct">📊 Système</div><div class="row">';
-  html+=met(s.cpu+'%','CPU',s.cpu>80?'var(--r)':s.cpu>50?'var(--y)':'var(--a)');
-  html+=met(fmt(s.ram_u)+'/'+fmt(s.ram_t),'RAM '+s.ram_pct+'%');
-  html+=met(s.disk_pct+'%','Disque');
-  html+='</div>'+spark([s.cpu,s.ram_pct,s.disk_pct,s.load[0]*10,50],120,28,'var(--a)')+'</div>';
-
-  // COL 2: LLM Usage
-  html+='<div class="c"><div class="ct">🧠 LLM — '+u.model+'</div><div class="row">';
-  html+=met(fmtT(u.d.t),'Aujourd\'hui');
-  html+=met(fmtT(u.w.t),'7 jours');
-  html+=met(fmtT(u.m.t),'30 jours');
-  html+='</div>';
-  const tokVals=hist.map(h=>h.t/1000);
-  html+=spark(tokVals,120,28,'var(--p)')+'</div>';
-
-  // COL 3: Services health
-  html+='<div class="c"><div class="ct">🔧 Services</div>';
-  for(const[n,sv]of Object.entries(h.svc)){
-    const cl=sv==='active'?'bg':'br';const lb=sv==='active'?'✅':'❌';
-    html+=`<div class="jr"><span>${n}</span><span class="b ${cl}">${lb}</span></div>`;}
-  html+='</div></div>';
-
-  // === Bottom: 2-col: Jobs + Activity ===
-  html+='<div class="g2">';
-
-  // Left: Jobs
-  html+='<div class="c"><div class="ct">⏰ Jobs ('+h.jobs.length+')</div>';
-  const errs=h.jobs.filter(j=>j.s==='error');
-  if(errs.length)html+=`<div style="color:var(--r);font-size:.8em;margin-bottom:8px">🔴 ${errs.length} en erreur : ${errs.map(e=>e.n).join(', ')}</div>`;
-  for(const j of h.jobs.slice(0,20)){
-    const cl=j.s==='ok'||!j.s?'bg':j.s==='error'?'br':'by';
-    html+=`<div class="jr"><span>${j.n}</span><span class="b ${cl}">${j.s||'ok'}</span></div>`;}
-  html+='</div>';
-
-  // Right: Activity + server info
-  html+='<div class="c"><div class="ct">📈 Activité</div><div class="row">';
-  html+=met(u.sess+'','Sessions');
-  html+=met(u.msgs+'','Messages');
-  html+=met(fmtT(u.w.c)+'$','Coût/sem');
-  html+='</div>';
-  html+=`<div style="margin-top:12px;font-size:.82em;color:var(--m)">`;
-  html+=`${s.host} · Uptime ${fmtUp(s.uptime)} · ${s.procs_total} process · ${s.conns} connexions`;
-  html+=' · Net ↓'+fmt(s.net_r)+' ↑'+fmt(s.net_s);
-  html+='</div></div>';
-
-  html+='</div>';
-
-  // Bottom row: token history chart (PC only)
-  if(tokVals.length>=7){
-    html+=`<div class="c" style="margin-top:10px"><div class="ct">📈 Tokens / jour (7 jours)</div>
-    <div style="display:flex;align-items:end;gap:3px;height:80px;padding:10px 0">`;
-    const mx=Math.max(...hist.map(h=>h.t),1);
-    for(const day of hist){
-      const pct=(day.t/mx)*100;
-      const cl=day.t>mx*0.8?'var(--r)':day.t>mx*0.5?'var(--y)':'var(--a)';
-      html+=`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
-        <span style="font-size:.65em;color:var(--m)">${fmtT(day.t)}</span>
-        <div style="width:100%;height:${pct}%;background:${cl};border-radius:4px 4px 0 0;min-height:4px;transition:height .3s"></div>
-        <span style="font-size:.6em;color:var(--m)">${day.d.slice(5)}</span></div>`;}
-    html+='</div></div>';}
-
-  document.getElementById('app').innerHTML=html;
-}
-
-function met(v,l,c){return`<div class="metric"><div class="v" style="color:${c||'var(--a)'}">${v}</div><div class="l">${l}</div></div>`}
-function fmt(b){for(const u of['B','KB','MB','GB','TB']){if(b<1024)return b.toFixed(1)+' '+u;b/=1024}return b.toFixed(1)+' PB'}
-function fmtUp(s){const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return(d?d+'j ':'')+(h?h+'h ':'')+m+'m'}
-function fmtT(n){if(n>=1000000)return(n/1000000).toFixed(1)+'M';if(n>=1000)return(n/1000).toFixed(1)+'k';return String(n)}
-function fmt$(c){if(c<0.01)return'<0.01$';return c.toFixed(2)+'$'}
-load();setInterval(load,30000);
+  function B(v,l,p){var c=p>80?'#ef4444':p>50?'#eab308':'#00d4ff';return'<div class="mc"><div class="n" style="color:'+c+'">'+v+'</div><div class="l">'+l+'</div><div class="bar"><div class="f" style="width:'+p+'%;background:'+c+'"></div></div></div>';}
+  load();
+  setInterval(load,30000);
+})();
 </script></body></html>"""
 
 LOGIN = """<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>⚡ Dashboard</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;background:#0a0a0f;color:#e0e0e0;height:100vh;display:flex;align-items:center;justify-content:center}.l{background:#13131a;border:1px solid #1e1e2e;border-radius:16px;padding:30px;width:300px}h1{text-align:center;margin-bottom:20px}input{width:100%;padding:12px;background:#1a1a24;border:1px solid #1e1e2e;border-radius:10px;color:#e0e0e0;margin-bottom:12px;font-size:1em}button{width:100%;padding:12px;background:linear-gradient(135deg,#00d4ff,#7c3aed);color:#fff;border:none;border-radius:10px;font-size:1em}</style></head><body><div class="l"><h1>⚡ Dashboard</h1><form method="POST" action="/login"><input type="text" name="u" placeholder="Utilisateur" required><input type="password" name="p" placeholder="Mot de passe" required><button>Se connecter</button></form></div></body></html>"""
@@ -280,7 +283,7 @@ class H(BaseHTTPRequestHandler):
         elif self.path == '/logout': self._logout()
         elif not auth(self): self._redir('/login')
         elif self.path.startswith('/api/data'):
-            self._json({"sys": sys_data(), "usage": usage_data(), "hermes": hermes_data(), "history": token_history()})
+            self._json({"sys": sys_data(), "usage": usage_data(), "hermes": hermes_data(), "history": token_history(), "mem": mem_history()})
         else: self._html(HTML)
     def do_POST(self):
         if self.path == '/login':
@@ -293,7 +296,7 @@ class H(BaseHTTPRequestHandler):
                 SESSIONS[sid] = datetime.now().timestamp()
                 self.send_response(302)
                 self.send_header('Location', '/')
-                self.send_header('Set-Cookie', f'dash_session={sid}; Path=/; Max-Age=86400')
+                self.send_header('Set-Cookie', f'dash_session={sid}; Path=/; Max-Age=86400; Secure; SameSite=Lax')
                 self.end_headers()
             else: self._redir('/login')
     def _html(self, h):
