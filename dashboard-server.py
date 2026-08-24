@@ -115,7 +115,8 @@ def usage_data():
         cur.execute("SELECT COUNT(*) FROM messages WHERE timestamp >= ?", (d0,))
         msgs_today = cur.fetchone()[0]
         conn.close()
-        return {"model":model,"provider":prov,"d":{"t":dt,"c":dc},"w":{"t":wt,"c":wc},"m":{"t":mt,"c":mc},"sess":sess_today,"msgs":msgs_today}
+        costDisp = "<0.01$" if dc < 0.01 else f"{dc:.2f}$"
+        return {"model":model,"provider":prov,"d":{"t":dt,"c":dc},"w":{"t":wt,"c":wc},"m":{"t":mt,"c":mc},"sess":sess_today,"msgs":msgs_today,"costDisp": costDisp}
     except: return {"model":"?","provider":"?","d":{"t":0,"c":0},"w":{"t":0,"c":0},"m":{"t":0,"c":0},"sess":0,"msgs":0}
 
 def hermes_data():
@@ -187,11 +188,21 @@ td:last-child{text-align:right}
 .st{font-size:.75em;color:var(--m);margin:14px 0 8px;display:flex;align-items:center;gap:6px;text-transform:uppercase;letter-spacing:.5px}
 .st::after{content:'';flex:1;height:1px;background:var(--c3)}
 /* Metrique */
-.mc{background:var(--c2);border:1px solid var(--c3);border-radius:8px;padding:10px;text-align:center}
-.mc .n{font-size:1.2em;font-weight:700}
+.mc{border:1px solid var(--c3);border-radius:10px;padding:12px;text-align:center;background:var(--c2)}
+.mc .n{font-size:1.1em;font-weight:700}
 .mc .l{font-size:.65em;color:var(--m);margin-top:3px}
 .mc .bar{height:3px;background:var(--c3);border-radius:2px;margin-top:5px;overflow:hidden}
 .mc .bar .f{height:100%;border-radius:2px}
+/* Cadres section */
+.cd{border:1px solid var(--c3);border-radius:10px;padding:14px;margin-bottom:10px;background:var(--c2)}
+.st{font-size:.75em;color:var(--m);margin:0 0 8px 0;display:flex;align-items:center;gap:6px;text-transform:uppercase;letter-spacing:.5px}
+.st::after{content:'';flex:1;height:1px;background:var(--c3)}
+.jr{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:.82em}
+.jr:last-child{border-bottom:none}
+.b{display:inline-block;padding:2px 10px;border-radius:4px;font-size:.7em;font-weight:600}
+.bg{background:rgba(34,197,94,.15);color:var(--g)}
+.br{background:rgba(239,68,68,.15);color:var(--r)}
+.by{background:rgba(234,179,8,.15);color:var(--y)}
 /* Responsive */
 @media(max-width:900px){.g3{grid-template-columns:1fr}.g2{grid-template-columns:1fr}}
 @media(max-width:480px){.mem-chart{display:none}}
@@ -216,60 +227,63 @@ td:last-child{text-align:right}
         var s=d.sys,u=d.usage,h=d.hermes,mem=d.mem||[];
         document.getElementById('dot').style.background=s.cpu>80?'#ef4444':s.cpu>50?'#eab308':'#22c55e';
         var html='';
-        // Stats row - 6 cartes (swap ajouté)
-        html+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">';
-        html+=B(s.cpu+'%','CPU',s.cpu);html+=B(fmt(s.ram_u)+'/'+fmt(s.ram_t),'RAM',s.ram_pct);
-        html+=B(s.disk_pct+'%','Disque',s.disk_pct);
-        if(s.swap_t>0){html+=B(fmt(s.swap_u)+'/'+fmt(s.swap_t),'Swap',s.swap_pct);}
-        else{html+=B('0','Swap',0);}
-        html+=B(T(u.d.t),'Tokens');html+=B(T(u.d.c)+'$','Coût');
+        // 6 cartes stats
+        html+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px">';
+        html+=B(s.cpu+'%','CPU',s.cpu,'#00d4ff');html+=B(fmt(s.ram_u)+'/'+fmt(s.ram_t),'RAM',s.ram_pct,'#22c55e');
+        if(s.swap_t>0){html+=B(fmt(s.swap_u)+'/'+fmt(s.swap_t),'Swap',s.swap_pct,'#7c3aed');}
+        else{html+=B('0','Swap',0,'#7c3aed');}
+        html+=B(s.disk_pct+'%','Disque',s.disk_pct,'#eab308');
+        html+=B(T(u.d.t),'Tokens',0,'#00d4ff');html+=B(u.costDisp||'0.00$','Coût',0,'#22c55e');
         html+='</div>';
-        // Graphe RAM + Swap (visible sur tablette+)
+        // Graphe RAM+Swap (tout de suite après les stats)
         if(mem.length>=2){
-          html+='<div class="mem-chart" style="background:var(--c2);border:1px solid var(--c3);border-radius:10px;padding:14px;margin-bottom:10px">';
-          html+='<div style="font-size:.75em;color:var(--m);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">📊 RAM &amp; Swap (4h)</div>';
-          html+='<div style="display:flex;align-items:end;gap:2px;height:100px;padding:4px 0">';
-          var maxY=Math.max.apply(null,mem.map(function(e){return Math.max(e.r,e.s,1)}));
-          for(var i=0;i<mem.length;i++){
-            var e=mem[i],rh=Math.max((e.r/maxY)*100,2),sh=Math.max((e.s/maxY)*100,2);
-            var c=rh>80?'#ef4444':rh>50?'#eab308':'#00d4ff';
-            html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;position:relative">';
-            // Swap bar (on top of RAM)
-            html+='<div style="width:100%;height:'+sh+'%;background:#7c3aed;border-radius:2px 2px 0 0;min-height:2px;opacity:0.7" title="Swap '+e.s.toFixed(0)+'%"></div>';
-            // RAM bar
-            html+='<div style="width:100%;height:'+rh+'%;background:'+c+';border-radius:0 0 2px 2px;min-height:2px" title="RAM '+e.r.toFixed(0)+'%"></div>';
-            if(i%4===0||i===mem.length-1){
-              html+='<span style="font-size:.55em;color:var(--m);margin-top:2px;white-space:nowrap">'+e.t.slice(5,10)+'</span>';
-            }
+          html+='<div class="cd mem-chart">';
+          html+='<div class="st">📊 RAM <span style="color:#22c55e;font-weight:400;text-transform:none">'+s.ram_pct+'%</span> &amp; Swap <span style="color:#7c3aed;font-weight:400;text-transform:none">'+s.swap_pct+'%</span></div>';
+          html+='<div style="display:flex;align-items:end;gap:2px;height:60px;margin-bottom:2px">';
+          for(var mi=0;mi<mem.length;mi++){
+            var me=mem[mi];
+            html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:1px">';
+            // Swap bar (relative à 100%, pas à maxY)
+            html+='<div style="width:100%;height:'+me.s+'%;background:#7c3aed;border-radius:2px 2px 0 0;min-height:1px;opacity:0.5"></div>';
+            var rc=me.r>80?'#ef4444':me.r>50?'#eab308':'#22c55e';
+            html+='<div style="width:100%;height:'+me.r+'%;background:'+rc+';border-radius:0 0 2px 2px;min-height:1px"></div>';
           }
-          html+='</div><div style="display:flex;gap:12px;margin-top:6px;font-size:.7em;color:var(--m)">';
-          html+='<span><span style="display:inline-block;width:10px;height:10px;background:#00d4ff;border-radius:2px;vertical-align:middle;margin-right:4px"></span>RAM</span>';
-          html+='<span><span style="display:inline-block;width:10px;height:10px;background:#7c3aed;border-radius:2px;vertical-align:middle;margin-right:4px"></span>Swap</span>';
-          html+='</div></div>';
+          html+='</div>';
+          html+='<div style="display:flex;gap:16px;font-size:.65em;color:var(--m)"><span>🟩 RAM</span><span>🟪 Swap</span></div>';
+          html+='</div>';
         }
+        // LLM model info
+        html+='<div class="cd"><div class="st">🧠 LLM</div><div style="font-size:.85em">'+u.model+' <span style="color:var(--m)">('+u.provider+')</span></div>';
+        html+='<div style="display:flex;gap:16px;margin-top:6px;font-size:.75em;color:var(--m)">';
+        html+='<span>📅 '+T(u.d.t)+' tok</span><span>💰 '+T(u.d.c)+'$</span>';
+        html+='<span>📊 '+T(u.w.t)+' / 7j</span>';
+        html+='</div></div>';
         // Services
-        html+='<div class="st">🔧 Services</div>';
-        for(var n in h.svc){
-          var sv=h.svc[n],cl=sv==='active'?'bg':'br',lb=sv==='active'?'✅':'❌';
+        html+='<div class="cd"><div class="st">🔧 Services</div>';
+        var svcKeys=Object.keys(h.svc);
+        for(var si=0;si<svcKeys.length;si++){
+          var n=svcKeys[si],sv=h.svc[n],cl=sv==='active'?'bg':'br',lb=sv==='active'?'✅':'❌';
           html+='<div class="jr"><span>'+n+'</span><span class="b '+cl+'">'+lb+'</span></div>';}
-        // Jobs
-        html+='<div class="st">⏰ Jobs</div>';
-        for(var j of h.jobs.slice(0,15)){
-          var cl=j.s==='ok'||!j.s?'bg':j.s==='error'?'br':'by';
-          html+='<div class="jr"><span>'+j.n+'</span><span class="b '+cl+'">'+(j.s||'ok')+'</span></div>';}
-        // Infos
-        html+='<div class="st">🖥️ '+s.host+'</div><div style="font-size:.8em;color:var(--m)">';
-        html+=up(s.uptime)+' · '+u.model;
         html+='</div>';
+        // Jobs
+        html+='<div class="cd"><div class="st">⏰ Jobs <span style="font-weight:400;color:var(--m)">('+h.jobs.length+')</span></div>';
+        var jobs=h.jobs||[];
+        for(var ji=0;ji<jobs.length&&ji<20;ji++){
+          var j=jobs[ji],cl=j.s==='ok'||!j.s?'bg':j.s==='error'?'br':'by';
+          html+='<div class="jr"><span style="font-size:.8em">'+j.n+'</span><span class="b '+cl+'">'+(j.s||'ok')+'</span></div>';}
+        html+='</div>';
+        // Infos
+        html+='<div class="cd"><div class="st">🖥️ '+s.host+'</div>';
+        html+='<div style="font-size:.8em;color:var(--m)">⏱️ '+up(s.uptime)+' · 🔗 '+s.conns+' connexions</div></div>';
         APP.innerHTML=html;
       }catch(e){APP.innerHTML='<div style="padding:40px;text-align:center;color:#ef4444">❌ '+e.message+'</div>';}
     };
-    x.onerror=function(){APP.innerHTML='<div style="padding:40px;text-align:center;color:#ef4444">❌ Erreur réseau. <a href="/login" style="color:#00d4ff">Reconnexion</a></div>';};
+    x.onerror=function(){APP.innerHTML='<div style="padding:40px;text-align:center;color:#ef4444">❌ Erreur. <a href="/login" style="color:#00d4ff">Reconnexion</a></div>';};
     x.ontimeout=function(){APP.innerHTML='<div style="padding:40px;text-align:center;color:#eab308">⏱️ Timeout. <a href="/" style="color:#00d4ff">Réessayer</a></div>';};
     x.send();
   }
 
-  function B(v,l,p){var c=p>80?'#ef4444':p>50?'#eab308':'#00d4ff';return'<div class="mc"><div class="n" style="color:'+c+'">'+v+'</div><div class="l">'+l+'</div><div class="bar"><div class="f" style="width:'+p+'%;background:'+c+'"></div></div></div>';}
+  function B(v,l,p,c){return'<div class="mc" style="border-color:'+c+'44"><div class="n" style="color:'+c+'">'+v+'</div><div class="l">'+l+'</div><div class="bar"><div class="f" style="width:'+Math.min(p,100)+'%;background:'+c+'"></div></div></div>';}
   load();
   setInterval(load,30000);
 })();
