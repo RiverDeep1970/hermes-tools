@@ -48,8 +48,8 @@ body{font-family:Georgia,'Times New Roman',serif;background:#f5f3ef;color:#1a1a1
 .art .src .tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;margin-left:6px}
 .tag-newsletter{background:#e8f0fe;color:#1967d2}
 .tag-youtube{background:#fce8e6;color:#c5221f}
-.tag-reddit{background:#e8f5e9;color:#1b8a3d}
 .tag-echecs{background:#e8f5e9;color:#1b8a3d;font-weight:700}
+.tag-techno{background:#f3e8fd;color:#7c3aed;font-weight:700}
 .tag-crypto{background:#fff3e0;color:#e65100}
 .tag-agenda{background:#f3e8fd;color:#7c3aed}
 .tag-event-sport{background:#fce8e6;color:#c5221f;font-weight:700}
@@ -97,9 +97,10 @@ body{font-family:Georgia,'Times New Roman',serif;background:#f5f3ef;color:#1a1a1
 var C=document.getElementById("content");
 var T=document.getElementById("tabs");
 var E=document.getElementById("edition");
-var tabNames=["une","newsletters","youtube","reddit","echecs","immobilier","agenda"];
-var tabLabels=["A la une","Newsletters","YouTube","Reddit","Échecs","Immobilier","Agenda"];
+var tabNames=["une","newsletters","youtube","echecs","techno","immobilier","agenda"];
+var tabLabels=["A la une","Newsletters","YouTube","Échecs","Techno","Immobilier","Agenda"];
 var readItems={};
+var currentTab="une";
 // Load read status from server
 function loadReadStatus(){
   var x=new XMLHttpRequest();
@@ -134,7 +135,7 @@ function render(data){
     var section=data.sections[n]||[];
     var count=0;
     if(n==="une"){count=section.length}else if(n==="agenda"){count=section.length}else{count=typeof section != "undefined" && section !== null && section.length ? section.length : 0}
-    th+='<div class="tab'+(i===0?" active":"")+'" data-tab="'+n+'">'+l+'<span class="badge'+(count>0?" show":"")+'">'+count+'</span></div>';
+    th+='<div class="tab'+(n===currentTab?" active":"")+'" data-tab="'+n+'">'+l+'<span class="badge'+(count>0?" show":"")+'">'+count+'</span></div>';
   }
   T.innerHTML=th;
   
@@ -148,8 +149,9 @@ function render(data){
   var html="";
   for(var i=0;i<tabNames.length;i++){
     var n=tabNames[i];
-    html+='<div class="pane'+(i===0?" active":"")+'" id="pane-'+n+'">';
+    html+='<div class="pane'+(n===currentTab?" active":"")+'" id="pane-'+n+'">';
     if(n==="une"){html+=renderUne(data.sections[n]||[])}
+    else if(n==="newsletters"){html+=renderNewsletter(data.sections[n]||[])}
     else if(n==="agenda"){html+=renderAgenda(data.sections[n]||[])}
     else if(n==="immobilier"){html+=renderImmo(data.sections[n]||[])}
     else{html+=renderList(data.sections[n]||[],n)}
@@ -254,8 +256,8 @@ function renderImmo(items){
     if(it.price||it.surface||it.rooms){
       h+='<p style="font-size:15px">';
       if(it.price)h+='<strong>'+Number(it.price).toLocaleString('fr-FR')+' \u20AC</strong> ';
-      if(it.surface)h+=it.surface+' m² ';
-      if(it.rooms)h+=it.rooms+' pièces ';
+      if(it.surface)h+=it.surface+' m\u00B2 ';
+      if(it.rooms)h+=it.rooms+' pi\u00E8ces ';
       h+='</p>';
     }
     if(it.features&&it.features.length){
@@ -266,6 +268,31 @@ function renderImmo(items){
       h+='</p>';
     }
     h+='<div class="meta">'+it.date+'</div>';
+    h+='</div>';
+  }
+  return h;
+}
+
+function renderNewsletter(items){
+  if(!items.length)return '<div style="padding:20px;text-align:center;color:#888">Aucune newsletter</div>';
+  var h="";
+  for(var i=0;i<items.length;i++){
+    var nl=items[i];
+    var src=nl.source||"Newsletter";
+    h+='<div class="art">';
+    h+='<div class="src">'+src+' <span class="tag tag-newsletter">Newsletter</span></div>';
+    if(nl.articles&&nl.articles.length){
+      for(var a=0;a<nl.articles.length;a++){
+        var art=nl.articles[a];
+        h+='<div style="margin:8px 0;padding:6px 0;border-bottom:1px solid #f0ede8">';
+        h+='<strong>'+(art.url?'<a href="'+art.url+'" target="_blank">':'')+art.title+(art.url?'</a>':'')+'</strong>';
+        if(art.summary)h+='<p style="font-size:13px;color:#555;margin:2px 0">'+art.summary+'</p>';
+        h+='</div>';
+      }
+    }else{
+      h+='<p style="color:#888;font-size:13px">Aucun article dans cette edition</p>';
+    }
+    h+='<div class="meta">'+nl.date+'</div>';
     h+='</div>';
   }
   return h;
@@ -300,6 +327,7 @@ function switchTab(el){
   for(var p=0;p<panes.length;p++){panes[p].classList.remove("active")}
   el.classList.add("active");
   var tabName=el.getAttribute("data-tab");
+  currentTab=tabName;
   document.getElementById("pane-"+tabName).classList.add("active");
   markTabRead(tabName);
 }
@@ -382,14 +410,14 @@ class H(BaseHTTPRequestHandler):
             data = f.read()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(data.encode())
     
     def _serve_html(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(PAGE.encode())
     
