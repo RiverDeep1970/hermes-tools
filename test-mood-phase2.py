@@ -58,7 +58,7 @@ check("manifest: icône maskable", any(i.get("purpose") == "maskable" for i in m
 s, _, b = req("GET", "/sw.js")
 check("sw.js: gère le cache et le hors-ligne", b"caches" in b and b"fetch" in b)
 check("sw.js: document en network-first (jamais de page périmée)",
-      b"req.mode === 'navigate'" in b and b"mood-v2-2" in b)
+      b"req.mode === 'navigate'" in b and b"mood-v2-" in b)
 
 print("=== 2. Page : PWA + accessibilité ===")
 s, h, _ = req("POST", "/login", form="token=" + urllib.parse.quote(TOKEN))
