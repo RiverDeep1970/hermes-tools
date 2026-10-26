@@ -278,10 +278,12 @@ textarea.field{resize:vertical;min-height:44px;font-family:inherit}
 .cal-nav .m-title{font-weight:600;font-size:.95em;color:var(--text)}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;text-align:center}
 .cal-hd{padding:4px;font-size:.7em;color:var(--text3);font-weight:600}
-.cal-d{padding:6px 0;font-size:.82em;cursor:pointer;transition:all .15s;border-radius:8px;color:var(--text);position:relative;min-height:38px}
-.cal-d:active{transform:scale(.9)}
-.cal-d.other{color:var(--text3);opacity:.4}
+.cal-d{aspect-ratio:1/1;min-height:0;border-radius:var(--r-md);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500;color:var(--text);position:relative;cursor:pointer;background:transparent;transition:transform var(--t-fast) var(--ease-out),box-shadow var(--t) var(--ease)}
+.cal-d:active{transform:scale(.94)}
+.cal-d.other{color:var(--text3);opacity:.3}
 .cal-d.today{font-weight:700;box-shadow:inset 0 0 0 2px var(--accent)}
+.cal-legend{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:11px;color:var(--text3)}
+.cal-legend-bar{flex:1;height:8px;border-radius:var(--r-full);background:linear-gradient(90deg,var(--mood1),var(--mood2),var(--mood3),var(--mood4),var(--mood5))}
 .cal-d .mood-dot{display:inline-block;width:28px;height:28px;border-radius:50%;line-height:28px;font-size:13px}
 .cal-d[data-h="1"]{background:var(--mood1-soft);border-radius:var(--r-md)}
 .cal-d[data-h="2"]{background:var(--mood2-soft);border-radius:var(--r-md)}
@@ -303,6 +305,18 @@ textarea.field{resize:vertical;min-height:44px;font-family:inherit}
 .corr-row .bar{height:8px;border-radius:4px;background:var(--accent);flex:1;margin:0 10px;min-width:20px}
 .delta{font-size:.8em;font-weight:600}
 .delta.up{color:var(--good-text)}.delta.down{color:var(--danger)}
+/* Anneau (moyenne) */
+.ring-wrap{position:relative;width:118px;height:118px;margin:0 auto 14px}
+.ring-wrap svg{display:block;width:118px;height:118px}
+.ring-fg{transition:stroke-dashoffset .9s var(--ease-out),stroke .3s var(--ease)}
+.ring-mid{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+.ring-mid b{font-size:1.6em;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.ring-mid span{font-size:.58em;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;margin-top:3px}
+/* Courbe de tendance */
+.spark{width:100%;height:auto;display:block}
+.spark-line{stroke-dasharray:900;stroke-dashoffset:900;animation:draw 1.1s var(--ease-out) forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+.spark-legend{display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-top:6px}
 /* MODAL */
 .modal-over{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:200;display:flex;align-items:flex-end;justify-content:center;opacity:0;pointer-events:none;transition:opacity .25s}
 .modal-over.show{opacity:1;pointer-events:auto}
@@ -369,6 +383,7 @@ textarea.field{resize:vertical;min-height:44px;font-family:inherit}
       <button onclick="calMove(1)" aria-label="Mois suivant">▶</button>
     </div>
     <div class="cal-grid" id="cal-grid"></div>
+    <div class="cal-legend"><span>Mal</span><div class="cal-legend-bar"></div><span>Très bien</span></div>
   </div>
   <div class="card">
     <h2 id="cal-day-title">Sélectionne un jour</h2>
@@ -378,6 +393,7 @@ textarea.field{resize:vertical;min-height:44px;font-family:inherit}
 
 <div class="tab-c" id="tab-stats">
   <div class="card"><h2>Résumé</h2><div id="stats-summary"></div></div>
+  <div class="card"><h2>30 derniers jours</h2><div id="stats-spark"></div></div>
   <div class="card"><h2>Répartition de l'humeur</h2><div id="stats-dist"></div></div>
   <div class="card"><h2>Tendance mensuelle</h2><div id="stats-trend"></div></div>
   <div class="card"><h2>Humeur par activité</h2><div id="stats-corr"></div></div>
@@ -675,7 +691,13 @@ async function calDay(ds){
 async function loadStats(){
   try{
     var r=await fetch('/stats'); var d=await r.json();
-    var sum='<div class="stat-row">';
+    var pct=(d.avg!=null)?Math.max(0,Math.min(100,(d.avg/5)*100)):0;
+    var ring='';
+    if(d.avg!=null){
+      var rcol=(d.avg>=4?'var(--good)':(d.avg>=3?'var(--warn)':'var(--danger)'));
+      ring='<div class="ring-wrap"><svg viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15.9155" fill="none" stroke="var(--border)" stroke-width="3.2"/><circle class="ring-fg" cx="18" cy="18" r="15.9155" fill="none" stroke="'+rcol+'" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="100" stroke-dashoffset="100" transform="rotate(-90 18 18)"/></svg><div class="ring-mid"><b>'+d.avg.toFixed(1)+'</b><span>moyenne /5</span></div></div>';
+    }
+    var sum=ring+'<div class="stat-row">';
     sum+='<div class="stat-box"><div class="val">'+(d.avg!=null?d.avg.toFixed(1):'—')+'</div><div class="lbl">Moyenne /5</div></div>';
     sum+='<div class="stat-box"><div class="val">'+(d.median!=null?d.median:'—')+'</div><div class="lbl">Médiane</div></div>';
     sum+='<div class="stat-box"><div class="val">'+d.total+'</div><div class="lbl">Entrées</div></div>';
@@ -691,6 +713,10 @@ async function loadStats(){
       sum+='</div><div class="lbl">Moyenne 7 jours'+(d.delta!=null?' (vs 7 j précédents)':'')+'</div></div></div>';
     }
     document.getElementById('stats-summary').innerHTML=sum;
+    setTimeout(function(){
+      var fg=document.querySelector('#stats-summary .ring-fg');
+      if(fg && d.avg!=null){ fg.style.strokeDashoffset=(100-pct).toFixed(2); }
+    },40);
     // répartition
     if(d.dist&&d.dist.length){
       var mx=1; for(var i=0;i<d.dist.length;i++){ if(d.dist[i].c>mx) mx=d.dist[i].c; }
@@ -721,6 +747,27 @@ async function loadStats(){
       }
       document.getElementById('stats-corr').innerHTML=ch;
     } else document.getElementById('stats-corr').innerHTML='<div class="empty">Ajoute des activités pour voir ce qui influence ton humeur</div>';
+    // courbe des 30 derniers jours
+    var ser=d.series||[], n=ser.length, W=280, H=64, pad=8, pts=[];
+    for(var i2=0;i2<n;i2++){
+      if(ser[i2].h==null) continue;
+      pts.push([(n>1?(i2/(n-1))*W:W/2), H-pad-((ser[i2].h-1)/4)*(H-2*pad)]);
+    }
+    if(pts.length>=2){
+      var path2='M'+pts[0][0].toFixed(1)+' '+pts[0][1].toFixed(1);
+      for(var k2=1;k2<pts.length;k2++){ path2+=' L'+pts[k2][0].toFixed(1)+' '+pts[k2][1].toFixed(1); }
+      var area=path2+' L'+pts[pts.length-1][0].toFixed(1)+' '+H+' L'+pts[0][0].toFixed(1)+' '+H+' Z';
+      var lp=pts[pts.length-1];
+      document.getElementById('stats-spark').innerHTML=
+        '<svg class="spark" viewBox="0 0 280 64" aria-hidden="true">'+
+        '<defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".28"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>'+
+        '<path d="'+area+'" fill="url(#sg)"/>'+
+        '<path class="spark-line" d="'+path2+'" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>'+
+        '<circle cx="'+lp[0].toFixed(1)+'" cy="'+lp[1].toFixed(1)+'" r="3.5" fill="var(--accent)"/></svg>'+
+        '<div class="spark-legend"><span>il y a 30 j</span><span>aujourd\'hui</span></div>';
+    } else {
+      document.getElementById('stats-spark').innerHTML='<div class="empty">Pas assez de données</div>';
+    }
   }catch(e){ document.getElementById('stats-summary').innerHTML='<div class="empty">Erreur de chargement</div>'; }
 }
 
@@ -1245,7 +1292,7 @@ class Handler(BaseHTTPRequestHandler):
         if total == 0:
             self._json({"total": 0, "avg": None, "median": None, "best": None, "worst": None,
                         "streak": 0, "record": 0, "m7": None, "delta": None,
-                        "dist": [], "monthly": [], "corr": []})
+                        "dist": [], "monthly": [], "corr": [], "series": []})
             return
         vals = [r["mood"] for r in rows]
         avg = sum(vals) / len(vals)
@@ -1269,11 +1316,16 @@ class Handler(BaseHTTPRequestHandler):
                 acc.setdefault(a, []).append(r["mood"])
         corr = [{"label": ACT_LABEL.get(a, a), "avg": sum(v) / len(v), "n": len(v)} for a, v in acc.items()]
         corr.sort(key=lambda x: x["avg"], reverse=True)
+        # série journalière (30 derniers jours) pour la courbe de tendance
+        by_date = {r["date"]: r["mood"] for r in rows}
+        series = [{"d": (today - timedelta(days=i)).isoformat(),
+                   "h": by_date.get((today - timedelta(days=i)).isoformat())} for i in range(29, -1, -1)]
         self._json({"total": total, "avg": round(avg, 2), "median": median,
                     "best": max(vals), "worst": min(vals), "streak": streak, "record": record,
                     "m7": round(m7, 2) if m7 is not None else None,
                     "delta": round(delta, 2) if delta is not None else None,
-                    "dist": dist_list, "monthly": monthly_list, "corr": corr[:8]})
+                    "dist": dist_list, "monthly": monthly_list, "corr": corr[:8],
+                    "series": series})
 
     def _handle_export(self):
         buf = io.StringIO()
