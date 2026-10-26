@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw
 OUT = os.path.expanduser(os.environ.get("MOOD_STATIC_DIR", "~/.hermes/mood-static"))
 os.makedirs(OUT, exist_ok=True)
 
-BG = (10, 132, 255)      # bleu iOS (dark accent)
+BG = (108, 92, 231)      # Iris #6c5ce7 (accent de l'app)
 FACE = (255, 212, 59)    # jaune
 INK = (60, 45, 0)
 
