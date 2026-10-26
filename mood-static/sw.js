@@ -1,5 +1,5 @@
 /* Service worker Mood Tracker — app shell + dernière réponse API en cache. */
-var CACHE = 'mood-v2-2';
+var CACHE = 'mood-v2-3';
 var SHELL = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {
