@@ -45,7 +45,8 @@ const DATA = {
 const STATS = { total: 9, avg: 3.11, median: 3, best: 5, worst: 2, streak: 4, record: 7, m7: 3.4, delta: 0.8,
   dist: [{v:2,c:3,l:'Mal'},{v:3,c:4,l:'Neutre'},{v:5,c:2,l:'Très bien'}],
   monthly: [{label:'2026-09',avg:3.5},{label:'2026-10',avg:3.2}],
-  corr: [{label:'Sport',avg:4.5,n:2},{label:'Lecture',avg:3.0,n:1}] };
+  corr: [{label:'Sport',avg:4.5,n:2},{label:'Lecture',avg:3.0,n:1}],
+  series: Array.from({length: 30}, (_, i) => ({ d: '2026-10-' + String(i + 1).padStart(2, '0'), h: (i % 4 === 0) ? null : (i % 5) + 1 })) };
 const CAL = { year: 2026, month: 9, month_name: 'Octobre', offset: 3,
   days: Array.from({length: 31}, (_, i) => ({ day: i + 1, wd: 0, humeur: i === 25 ? 3 : null })) };
 
@@ -105,6 +106,9 @@ setTimeout(() => {
   check('lecture préremplie', doc.getElementById('lecture').value === 'Hawkmoon');
   check('3 onglets + recherche = 4', doc.querySelectorAll('.tab').length === 4, doc.querySelectorAll('.tab').length);
   check('panes cohérentes (4)', doc.querySelectorAll('.tab-c').length === 4, doc.querySelectorAll('.tab-c').length);
+  check('pastilles teintées (--mood inline)', /--mood:var\(--mood\d\)/.test(doc.querySelector('#q1t .qt').getAttribute('style') || ''),
+        doc.querySelector('#q1t .qt').getAttribute('style'));
+  check('pastilles avec --mood-soft', /--mood-soft:var\(--mood\d-soft\)/.test(doc.querySelector('#q1t .qt').getAttribute('style') || ''));
 
   console.log('=== 1-tap : clic sur « Bien » (4) ===');
   const before = calls.length;
@@ -124,6 +128,8 @@ setTimeout(() => {
       check('titre du mois = Octobre 2026', doc.getElementById('cal-title').textContent === 'Octobre 2026',
             doc.getElementById('cal-title').textContent);
       check('grille calendrier rendue (offset 3 + jours)', doc.querySelectorAll('#cal-grid .cal-d').length >= 28);
+      check('jours avec humeur teintés via data-h', doc.querySelectorAll('#cal-grid .cal-d[data-h]').length >= 1,
+            doc.querySelectorAll('#cal-grid .cal-d[data-h]').length);
 
       console.log('=== Stats ===');
       w.swTab('stats');
@@ -141,6 +147,11 @@ setTimeout(() => {
               /Meilleure/.test(sum + doc.getElementById('stats-summary').innerHTML)
               && /Très bien/.test(doc.getElementById('stats-summary').innerHTML),
               doc.getElementById('stats-summary').textContent);
+        check('anneau de moyenne rendu (SVG)', doc.querySelectorAll('#stats-summary .ring-fg').length === 1);
+        const sl = doc.querySelector('#stats-spark .spark-line');
+        check('courbe de tendance rendue (path SVG)', !!sl && /^M[\d.]+ [\d.]+ L/.test(sl.getAttribute('d') || ''),
+              sl ? sl.getAttribute('d').slice(0, 40) : 'absent');
+        check('légende de la courbe', /il y a 30 j/.test(doc.getElementById('stats-spark').textContent));
 
         console.log('=== Recherche ===');
         doc.getElementById('q').value = 'silo';
