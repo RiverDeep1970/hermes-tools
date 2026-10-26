@@ -793,7 +793,19 @@ async function modDel(){
 function closeMod(){ document.getElementById('modal').classList.remove('show'); editDate=null; }
 
 // === PWA ===
-if('serviceWorker' in navigator){ try{ navigator.serviceWorker.register('/sw.js').catch(function(){}); }catch(e){} }
+if('serviceWorker' in navigator){
+  try{
+    navigator.serviceWorker.register('/sw.js').then(function(reg){
+      // vérifie les mises à jour à l'ouverture et au retour sur l'app
+      reg.update();
+      document.addEventListener('visibilitychange',function(){ if(!document.hidden){ reg.update(); } });
+    }).catch(function(){});
+    var swReloading=false;
+    navigator.serviceWorker.addEventListener('controllerchange',function(){
+      if(swReloading){return;} swReloading=true; location.reload();
+    });
+  }catch(e){}
+}
 var deferredInstall=null;
 window.addEventListener('beforeinstallprompt',function(e){ e.preventDefault(); deferredInstall=e; var b=document.getElementById('install-btn'); if(b) b.style.display='inline-block'; });
 window.addEventListener('appinstalled',function(){ var b=document.getElementById('install-btn'); if(b) b.style.display='none'; });
