@@ -57,6 +57,8 @@ check("manifest: standalone + start_url + 3 icônes",
 check("manifest: icône maskable", any(i.get("purpose") == "maskable" for i in mf["icons"]))
 s, _, b = req("GET", "/sw.js")
 check("sw.js: gère le cache et le hors-ligne", b"caches" in b and b"fetch" in b)
+check("sw.js: document en network-first (jamais de page périmée)",
+      b"req.mode === 'navigate'" in b and b"mood-v2-2" in b)
 
 print("=== 2. Page : PWA + accessibilité ===")
 s, h, _ = req("POST", "/login", form="token=" + urllib.parse.quote(TOKEN))
@@ -73,6 +75,8 @@ check("4 onglets déclarés",
 check("4 panes", all(f'id="tab-{t}"' in html for t in ("today", "cal", "stats", "search")))
 check("bouton installer", 'install-btn' in html and 'beforeinstallprompt' in html)
 check("enregistrement SW", "serviceWorker" in html and "/sw.js" in html)
+check("mise à jour auto du SW (controllerchange + reg.update)",
+      "controllerchange" in html and "reg.update()" in html)
 check("file d'attente hors-ligne", 'mood-pending' in html and 'flushPending' in html)
 check("champ de recherche", 'id="q"' in html and 'doSearch' in html)
 check("CSP: worker-src autorisé", 'worker-src' in (h.get("content-security-policy") or ""))
