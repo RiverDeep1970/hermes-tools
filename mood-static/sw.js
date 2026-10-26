@@ -1,5 +1,5 @@
 /* Service worker Mood Tracker — app shell + dernière réponse API en cache. */
-var CACHE = 'mood-v2-1';
+var CACHE = 'mood-v2-2';
 var SHELL = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {
@@ -19,6 +19,21 @@ self.addEventListener('fetch', function (e) {
 
   var apiPath = (url.pathname === '/data' || url.pathname === '/stats' ||
                  url.pathname === '/calendar' || url.pathname === '/get-entry');
+  // Le document HTML est TOUJOURS pris au réseau : on ne sert jamais une page périmée.
+  if (req.mode === 'navigate' || url.pathname === '/') {
+    e.respondWith(
+      fetch(req).then(function (r) {
+        var cl = r.clone();
+        caches.open(CACHE).then(function (c) { c.put('/', cl); });
+        return r;
+      }).catch(function () {
+        return caches.match('/').then(function (m) {
+          return m || caches.match(req);
+        });
+      })
+    );
+    return;
+  }
   if (apiPath) {
     // réseau d'abord, cache en secours (hors-ligne -> dernière réponse connue)
     e.respondWith(
