@@ -66,6 +66,19 @@ check("spinner d'enregistrement", ".sb[data-busy]:after" in html and "@keyframes
 check("respect de prefers-reduced-motion", "prefers-reduced-motion:reduce" in html)
 check("plus de scale(.9) brut sur .qt", ".qt:active .e{transform:scale(.92)}" in html)
 
+print("=== L4 · Calendrier ===")
+check("cellules carrées (aspect-ratio)", "aspect-ratio:1/1" in html)
+check("légende dégradé du calendrier",
+      "cal-legend" in html and "linear-gradient(90deg,var(--mood1)" in html)
+check("teintes par niveau conservées", all(f'.cal-d[data-h="{i}"]' in html for i in range(1, 6)))
+
+print("=== L5 · Stats SVG ===")
+check("anneau de progression (SVG + .ring-fg)", "ring-fg" in html and 'viewBox="0 0 36 36"' in html)
+check("valeur au centre de l'anneau (.ring-mid)", "ring-mid" in html)
+check("courbe de tendance (sparkline)", "spark-line" in html and "@keyframes draw" in html)
+check("carte 30 derniers jours", 'id="stats-spark"' in html and "30 derniers jours" in html)
+check("série journalière exposée par /stats", '"series": series' in src or '"series":series' in src)
+
 print("=== Cohérence CSS ===")
 used = set(re.findall(r"var\((--[a-z0-9-]+)", html))
 defined = set(re.findall(r"(--[a-z0-9-]+)\s*:", html))
