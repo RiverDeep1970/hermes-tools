@@ -462,7 +462,7 @@ function cryptSpark(arr,w,h){
 }
 
 function cryptDelta(label,v){
-  if(v===null||v===undefined||isNaN(v))return '<span class="cdelta cdelta--na">'+esc(label)+' n/d</span>';
+  if(v===null||v===undefined||isNaN(v))return "";
   v=Number(v);
   return '<span class="cdelta cdelta--'+(v>=0?"up":"down")+'">'+esc(label)+' '+(v>=0?"+":"")+v.toFixed(2)+'%</span>';
 }
@@ -472,7 +472,7 @@ function cryptCard(c,lbl7){
   h+='<div class="ccard__hd"><span class="ccard__sym">'+esc(c.symbol)+'</span><span class="ccard__pr">'+cryptPrice(c.price)+'</span></div>';
   h+='<div class="ccard__deltas">'+cryptDelta("24 h",c.change_24h)+cryptDelta(lbl7,c.change_7d)+'</div>';
   if(c.spark&&c.spark.length>1)h+='<div class="ccard__spark">'+cryptSpark(c.spark,80,26)+'</div>';
-  else h+='<div class="ccard__spark ccard__spark--empty">Courbe bientot disponible</div>';
+  else h+='<div class="ccard__spark ccard__spark--empty">courbe en construction</div>';
   h+='</div>';
   return h;
 }
@@ -532,7 +532,7 @@ function buildTicker(data){
     var displayCh=hasCh?(ch>=0?"+":"")+ch.toFixed(2)+"%":"N/A";
     h+='<span class="ticker-item">';
     h+='<span class="sym">'+c.symbol+'</span>';
-    h+='<span class="pr">$'+c.price.toFixed(2)+'</span>';
+    h+='<span class="pr">'+cryptPrice(c.price)+'</span>';
     h+='<span class="ch '+cls+'">'+displayCh+'</span>';
     h+='<span class="sep">|</span>';
     h+='</span>';
