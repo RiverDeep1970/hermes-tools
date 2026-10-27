@@ -14,6 +14,7 @@ CLEANUP_RULES = {
     "youtube":     {"hours": 48,  "max": 15},    # 2 jours
     "immobilier":  {"hours": 336, "max": 20},    # 14 jours
     "chess":       {"hours": 168, "max": 30},    # 7 jours
+    "techno":      {"hours": 168, "max": 30},    # 7 jours
 }
 
 def load_state():
@@ -56,6 +57,63 @@ def cleanup_data():
                 removed += 1
         if removed:
             print(f"  Nettoyage {name}: {removed} fichiers supprimes")
+
+# Symboles suivis en priorite dans l'onglet Crypto (le reste en lignes compactes)
+CRYPTO_WATCH = ["TAO", "BTC", "ETH", "AAVE", "ZEC"]
+
+
+def build_crypto_section(crypto, history):
+    """Construit la section 'crypto' pour l'onglet du journal.
+
+    crypto  : dict {source, date, coins:[{symbol, price, change_24h}]}
+    history : dict {SYMBOL: [{date, price}]}  (1 point par jour)
+    """
+    coins = crypto.get("coins", []) or []
+    by_sym = {}
+    for c in coins:
+        sym = c.get("symbol")
+        if sym:
+            by_sym[sym] = c
+
+    def series(sym):
+        return [p.get("price") for p in (history.get(sym) or []) if p.get("price")]
+
+    def change_7d(sym):
+        s = series(sym)
+        if len(s) < 2 or not s[0]:
+            return None
+        return round((s[-1] - s[0]) / s[0] * 100, 2)
+
+    watch = []
+    for sym in CRYPTO_WATCH:
+        c = by_sym.get(sym)
+        if not c:
+            continue
+        watch.append({
+            "symbol": sym,
+            "price": c.get("price", 0),
+            "change_24h": c.get("change_24h", 0),
+            "change_7d": change_7d(sym),
+            "spark": series(sym)[-14:],
+        })
+
+    others = [{"symbol": s, "price": c.get("price", 0), "change_24h": c.get("change_24h", 0)}
+              for s, c in by_sym.items() if s not in CRYPTO_WATCH]
+    others.sort(key=lambda x: x.get("change_24h", 0), reverse=True)
+
+    ranked = sorted(by_sym.values(), key=lambda c: c.get("change_24h", 0))
+    up = [{"symbol": c["symbol"], "change_24h": c.get("change_24h", 0)} for c in ranked[-2:][::-1]]
+    down = [{"symbol": c["symbol"], "change_24h": c.get("change_24h", 0)} for c in ranked[:2]]
+
+    days = max([len(v) for v in history.values()] or [0])
+    return {
+        "updated": crypto.get("date"),
+        "watchlist": watch,
+        "others": others,
+        "movers": {"up": up, "down": down},
+        "history_days": days,
+    }
+
 
 def load_json_files(dirpath):
     """Load all JSON files from a directory. Adds _collected_at from file mtime."""
@@ -114,11 +172,13 @@ def get_events_by_range(days_from, days_to):
                         if dtstart is None:
                             continue
                         dt = dtstart.dt
-                        if hasattr(dt, 'strftime'):
+                        if hasattr(dt, 'hour'):
+                            # datetime avec heure
                             d = dt
                             date_str = d.strftime("%Y-%m-%d")
                             time_str = d.strftime("%H:%M")
                         else:
+                            # date seule (VALUE=DATE)
                             d = datetime(dt.year, dt.month, dt.day)
                             date_str = d.strftime("%Y-%m-%d")
                             time_str = ""
@@ -161,7 +221,14 @@ def build_edition():
     youtube = load_json_files(os.path.join(DATA, "youtube"))
     reddit = load_json_files(os.path.join(DATA, "reddit"))
     chess_raw = load_json_files(os.path.join(DATA, "chess"))
-    crypto_raw = load_json_files(os.path.join(DATA, "crypto"))
+    techno = load_json_files(os.path.join(DATA, "techno"))
+    # Ne garder que les snapshots de prix (history.json n'a pas de cle "coins")
+    crypto_raw = [x for x in load_json_files(os.path.join(DATA, "crypto")) if "coins" in x]
+    try:
+        with open(os.path.join(DATA, "crypto", "history.json")) as fh:
+            crypto_history = json.load(fh)
+    except Exception:
+        crypto_history = {}
     immobilier = load_json_files(os.path.join(DATA, "immobilier"))
     calendar_month = get_events_by_range(0, 30)
     calendar_today = [e for e in calendar_month if e["date"] == now.strftime("%Y-%m-%d")]
@@ -176,12 +243,30 @@ def build_edition():
     cutoff = state.get("last_published_at")
     seen_ids = set(state.get("seen_ids", []))
     
+    FRESH_HOURS = 48
+
     def is_fresh(item):
-        """Check if item was collected since last edition."""
-        if cutoff is None:
-            return True
-        collected = item.get("_collected_at", "")
-        return collected > cutoff
+        """Element collecte dans la fenetre recente (FRESH_HOURS heures).
+
+        Avant, la fraicheur signifiait « collecte depuis la derniere
+        compilation ». Comme les collectes (newsletters 4h/9h/15h, YouTube 16h)
+        ne coincident pas avec les trois compilations de la journee, l'edition
+        de midi et celle du soir ne trouvaient plus aucun element « frais » :
+        la une se reduisait alors aux evenements du calendrier (0 ou 1 element).
+        """
+        collected = item.get("_collected_at") or item.get("date") or ""
+        if not collected:
+            return False
+        try:
+            quand = datetime.fromisoformat(str(collected).replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if quand.tzinfo is not None:
+            quand = quand.astimezone().replace(tzinfo=None)
+        try:
+            return (now - quand) <= timedelta(hours=FRESH_HOURS)
+        except TypeError:
+            return False
     
     def item_id(item):
         """Extract dedup id from an item dict."""
@@ -207,25 +292,28 @@ def build_edition():
     # 3 informations marquantes piochées dans newsletters/youtube/reddit
     highlights = []
     
-    # YouTube key_points (faits marquants)
-    for yt in fresh_youtube[:3]:
-        if yt.get("key_points"):
-            for kp in yt["key_points"][:2]:
-                if len(highlights) >= 3: break
-                highlights.append({
-                    "source": yt.get("source", "YouTube"),
-                    "type": "marquante",
-                    "title": kp[:90],
-                    "summary": yt.get("title", ""),
-                    "url": yt.get("url", ""),
-                    "date": yt.get("date", "")
-                })
-        if len(highlights) >= 3: break
+    # YouTube key_points (faits marquants) — UN seul point par video, pris sur
+    # les videos les plus recentes : sinon les trois marquantes pouvaient venir
+    # du meme sujet (cas observe : 3 points de la meme video Les Echos).
+    for yt in fresh_youtube[:6]:
+        if len(highlights) >= 3:
+            break
+        kps = yt.get("key_points") or []
+        if not kps:
+            continue
+        highlights.append({
+            "source": yt.get("source", "YouTube"),
+            "type": "marquante",
+            "title": kps[0][:90],
+            "summary": yt.get("title", ""),
+            "url": yt.get("url", ""),
+            "date": yt.get("date", "")
+        })
     
-    # Newsletter résumés
+    # Newsletter résumés — un seul article par newsletter, pour la diversité
     for nl in fresh_newsletters[:3]:
         if isinstance(nl, dict) and nl.get("articles"):
-            for art in nl["articles"][:2]:
+            for art in nl["articles"][:1]:
                 if len(highlights) >= 3: break
                 txt = art.get("summary", "") or art.get("title", "")
                 if len(txt) > 20:
@@ -324,7 +412,60 @@ def build_edition():
             "author": rd.get("author", ""),
             "date": rd.get("date", "")
         })
-    
+
+    # Filet de securite : la une ne doit JAMAIS etre vide alors que des donnees
+    # existent, et elle doit rester substantielle au fil de la journee (chaque
+    # compilation consomme des identifiants « vus »). On complete donc jusqu'a
+    # UNE_MIN elements avec les plus recents, en evitant les doublons.
+    UNE_MIN = 5
+    if len(une) < UNE_MIN:
+        deja = set()
+        for it in une:
+            iid = item_id(it)
+            if iid:
+                deja.add(iid)
+        complements = []
+        for yt in youtube[:4]:
+            complements.append({
+                "source": yt.get("source", "YouTube"),
+                "type": "video",
+                "title": yt.get("title", ""),
+                "summary": yt.get("summary", ""),
+                "key_points": yt.get("key_points", []),
+                "url": yt.get("url", ""),
+                "date": yt.get("date", "")
+            })
+        for nl in newsletters[:4]:
+            if not isinstance(nl, dict):
+                continue
+            for art in (nl.get("articles") or [])[:2]:
+                complements.append({
+                    "source": nl.get("source", "Newsletter"),
+                    "type": "article",
+                    "title": art.get("title", ""),
+                    "summary": art.get("summary", ""),
+                    "url": art.get("url", ""),
+                    "date": nl.get("date", "")
+                })
+        for rd in reddit[:4]:
+            complements.append({
+                "source": rd.get("source", "Reddit"),
+                "type": "post",
+                "title": rd.get("title", ""),
+                "url": rd.get("url", ""),
+                "author": rd.get("author", ""),
+                "date": rd.get("date", "")
+            })
+        for it in complements:
+            if len(une) >= UNE_MIN:
+                break
+            iid = item_id(it)
+            if iid and iid in deja:
+                continue
+            une.append(it)
+            if iid:
+                deja.add(iid)
+
     edition_data = {
         "id": edition_id,
         "date": now.strftime("%Y-%m-%d"),
@@ -337,13 +478,20 @@ def build_edition():
             "youtube": youtube[:6],
             "reddit": reddit[:10],
             "echecs": chess_raw[:10],
+            "techno": techno[:10],
             "immobilier": immobilier[:10],
+            "crypto": build_crypto_section(crypto, crypto_history),
             "agenda": calendar_month
         }
     }
     
     with open(os.path.join(BASE, "latest.json"), "w") as f:
         json.dump(edition_data, f, indent=2, ensure_ascii=False)
+    
+    # Log warning for empty sections
+    for name, items in edition_data["sections"].items():
+        if not items:
+            print("  AVERTISSEMENT: section '{}' est vide".format(name))
     
     # Update state: record seen IDs from "une" + update cutoff
     new_ids = set()
