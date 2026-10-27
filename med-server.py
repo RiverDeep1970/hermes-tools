@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Médicaments Tracker — serveur web + API."""
 import json
+import re
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, date, timedelta
 import os
@@ -57,8 +58,77 @@ conn.execute("""CREATE TABLE IF NOT EXISTS intakes (
     taken_date TEXT DEFAULT (date('now')),
     FOREIGN KEY(med_id) REFERENCES meds(id)
 )""")
+# Fiches officielles (BDPM/ANSM). Même schéma que med-info.py -> compatible.
+conn.execute("""CREATE TABLE IF NOT EXISTS med_info (
+    cis TEXT PRIMARY KEY,
+    denomination TEXT,
+    forme TEXT, voie TEXT, statut TEXT, titulaire TEXT, date_amm TEXT,
+    substances TEXT,
+    indications TEXT, posologie TEXT, contre_indications TEXT,
+    conservation TEXT, cond_prescription TEXT,
+    notice_pourquoi TEXT, notice_comment_prendre TEXT,
+    resume TEXT,
+    source TEXT, fetched_at TEXT
+)""")
+# Migration douce : lien meds -> code CIS de la BDPM
+if "cis" not in [r[1] for r in conn.execute("PRAGMA table_info(meds)")]:
+    conn.execute("ALTER TABLE meds ADD COLUMN cis TEXT")
 conn.commit()
 conn.close()
+
+# ── Module de récupération des fiches officielles (med-info.py) ──
+MED_INFO_SCRIPT = os.path.expanduser("~/.hermes/scripts/med-info.py")
+
+
+def mi():
+    """Charge med-info.py (nom de fichier à tiret -> importlib)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("med_info", MED_INFO_SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def build_auto_resume(rec):
+    """Résumé de repli (~10 lignes) construit sans LLM à partir des extraits.
+    Sert quand une fiche est récupérée hors de l'agent (ajout depuis l'appli)."""
+    def clean(t, n=420):
+        t = (t or "").strip()
+        t = re.sub(r"[ \t]*\n(?=[a-zà-ÿ(0-9])", " ", t)   # recolle les phrases coupées
+        t = re.sub(r"\s*\n\s*", " ", t)
+        t = re.sub(r"\s+([,;.])", r"\1", t)
+        if len(t) > n:
+            t = t[:n].rsplit(" ", 1)[0] + "…"
+        return t.strip()
+
+    # POURQUOI : la notice est écrite pour le patient, c'est la plus claire
+    pour = rec.get("notice_pourquoi") or rec.get("indications") or ""
+    m = re.search(r"(Ce médicament (?:est indiqué|est utilisé|appartient|est un|contient)[^.·]*)", pour)
+    pour = m.group(1) if m else pour
+    if not m and "Classe pharmacothérapeutique" in pour:
+        pour = pour.split("Classe pharmacothérapeutique", 1)[-1]
+        pour = pour[pour.split("\n")[0].find(":") + 1:] if ":" in pour.split("\n")[0] else pour
+    pour = re.sub(r"^(?:[^\n:]{0,90}:\s*)", "", pour, count=1)
+
+    # PRISE : extraire le bloc Posologie/Mode d'administration de la notice
+    prise = rec.get("notice_comment_prendre") or ""
+    if "Posologie" in prise:
+        prise = prise.split("Posologie", 1)[1]
+        prise = re.split(r"Si vous (?:avez pris|oubliez|arrêtez)", prise)[0]
+    if len(prise.strip()) < 40:
+        prise = rec.get("posologie") or prise
+    # retire les libellés de rubrique qui parsèment la notice
+    prise = re.sub(r"(?:^|\s)(?:Mode d['’]administration|"
+                   r"Fréquence d['’]administration)(?=\s|$)", " ", prise)
+    prise = re.sub(r"^(?:\s*Posologie\s*)+", "", prise)
+    lines = [
+        "%s%s" % (rec.get("denomination", ""), " — " + rec["forme"] if rec.get("forme") else ""),
+        "POURQUOI : " + clean(pour, 320),
+        "PRISE : " + clean(prise, 400),
+        "CONTRE-INDICATIONS : " + clean(rec.get("contre_indications"), 260),
+        "CONSERVATION : " + clean(rec.get("conservation"), 170),
+    ]
+    return "\n".join(l for l in lines if l.split(":", 1)[-1].strip())
 
 HTML = """<!DOCTYPE html>
 <html lang="fr">
@@ -120,6 +190,27 @@ select { padding: 8px; border: 2px solid #e0e0e0; border-radius: 8px; font-size:
 .error { background: #f8d7da; color: #721c24; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
+/* Bouton info + fiche médicament */
+.ibtn { display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:50%; background:#eef4ff; color:#007aff; font-size:15px; font-weight:700; cursor:pointer; flex:0 0 auto; }
+.ibtn:active { background:#d8e6ff; }
+.li-actions { display:flex; align-items:center; gap:10px; flex:0 0 auto; }
+.modal { display:none; position:fixed; top:0; right:0; bottom:0; left:0; background:rgba(0,0,0,0.45); z-index:400; padding:16px; overflow-y:auto; }
+.modal.on { display:block; }
+.modal-card { background:#fff; border-radius:16px; max-width:560px; margin:30px auto; padding:18px; box-shadow:0 8px 30px rgba(0,0,0,.25); }
+.modal-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; }
+#modal-title { font-size:1.05em; font-weight:700; color:#222; padding-right:10px; line-height:1.3; }
+.modal-x { color:#999; font-size:1.1em; cursor:pointer; padding:2px 8px; flex:0 0 auto; }
+.resume { white-space:pre-wrap; font-size:0.9em; line-height:1.55; color:#333; background:#f8f9fb; border-radius:10px; padding:12px; }
+.src { margin-top:12px; font-size:0.78em; }
+.src a, .modal-body a { color:#007aff; text-decoration:none; }
+.muted { color:#999; }
+.small { font-size:0.75em; }
+.cand-title { font-size:0.9em; font-weight:600; margin:12px 0 8px; color:#333; }
+.cand-item { border:2px solid #e8e8e8; border-radius:10px; padding:10px 12px; margin-bottom:8px; cursor:pointer; }
+.cand-item:active { border-color:#007aff; background:#f2f7ff; }
+.cand-name { font-size:0.92em; font-weight:600; color:#222; }
+.btn-ghost { width:100%; padding:10px; background:#f2f2f2; color:#666; border:none; border-radius:10px; font-size:0.85em; cursor:pointer; }
+#link-status { display:none; margin-top:10px; padding:10px; border-radius:10px; background:#eef4ff; color:#0056b3; font-size:0.85em; text-align:center; }
 </style>
 </head>
 <body>
@@ -150,6 +241,8 @@ select { padding: 8px; border: 2px solid #e0e0e0; border-radius: 8px; font-size:
       <label><input type="checkbox" id="m-midday"> 🌞 Midi</label>
       <label><input type="checkbox" id="m-evening"> 🌙 Soir</label>
     </div>
+    <div id="cand-box" style="display:none"></div>
+    <div id="link-status"></div>
   </div>
   <div class="card">
     <h2>📋 Liste des médicaments</h2>
@@ -162,6 +255,16 @@ select { padding: 8px; border: 2px solid #e0e0e0; border-radius: 8px; font-size:
 </div>
 
 <div id="status"></div>
+</div>
+
+<div class="modal" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div id="modal-title">ⓘ</div>
+      <span class="modal-x" onclick="closeModal()">✕</span>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
 </div>
 
 <script>
@@ -191,6 +294,7 @@ async function loadToday() {
         html += '<div class="med-item' + (m.taken ? ' taken' : '') + '">';
         html += '<input type="checkbox" class="med-check" data-id="' + m.id + '" data-meal="' + meal + '" ' + (m.taken ? 'checked' : '') + '>';
         html += '<label>' + m.name + ' <span class="dosage">' + (m.dosage || '') + '</span></label>';
+        html += '<span class="ibtn" onclick="showInfo(' + m.id + ')">i</span>';
         html += '</div>';
       }
       html += '</div>';
@@ -278,7 +382,10 @@ async function loadMeds() {
     html += '<ul class="med-list">';
     for (const m of active) {
       const meals = [m.morning && labels.morning, m.midday && labels.midday, m.evening && labels.evening].filter(Boolean).join(' ');
-      html += '<li><div><strong>' + m.name + '</strong> <span class="info">' + meals + '</span></div><span class="del" onclick="delMed(' + m.id + ')">⏸️</span></li>';
+      const fic = m.cis ? '' : ' <span class="muted small">(sans fiche)</span>';
+      html += '<li><div><strong>' + m.name + '</strong> <span class="info">' + meals + '</span>' + fic + '</div>';
+      html += '<span class="li-actions"><span class="ibtn" onclick="showInfo(' + m.id + ')">i</span>';
+      html += '<span class="del" onclick="delMed(' + m.id + ')">⏸️</span></span></li>';
     }
     html += '</ul>';
   } else {
@@ -297,16 +404,130 @@ async function loadMeds() {
   document.getElementById('med-list').innerHTML = html;
 }
 
-async function addMed() {
-  const name = document.getElementById('new-name').value.trim();
+/* ── Fiches officielles (BDPM / ANSM) ── */
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function openModal(title, bodyHtml) {
+  document.getElementById('modal-title').innerHTML = title;
+  document.getElementById('modal-body').innerHTML = bodyHtml;
+  document.getElementById('modal').className = 'modal on';
+}
+function closeModal() { document.getElementById('modal').className = 'modal'; }
+
+function showInfo(medId) {
+  openModal('ⓘ Chargement...', '<p class="muted">Récupération de la fiche officielle...</p>');
+  var x = new XMLHttpRequest();
+  x.open('GET', '/api/med_info?id=' + medId + '&_=' + Date.now(), true);
+  x.onload = function() {
+    if (x.status === 401) { window.location.href = '/login'; return; }
+    var d = {};
+    try { d = JSON.parse(x.responseText); } catch (e) {}
+    if (!d.linked) {
+      openModal('ⓘ ' + esc(d.name),
+        '<p class="muted">Aucune fiche officielle n\\'est liée à ce médicament.</p>' +
+        '<p class="src">Rechercher la fiche : <a href="https://base-donnees-publique.medicaments.gouv.fr/" target="_blank">base publique des médicaments (ANSM)</a></p>');
+      return;
+    }
+    var h = '';
+    if (d.resume) {
+      h += '<div class="resume">' + esc(d.resume) + '</div>';
+    } else {
+      h += '<p class="muted">Fiche liée, résumé indisponible.</p>';
+      if (d.indications) h += '<div class="resume">' + esc(d.indications) + '</div>';
+    }
+    if (d.source) h += '<p class="src"><a href="' + esc(d.source) + '" target="_blank">Fiche officielle complète (base publique des médicaments)</a></p>';
+    openModal('ⓘ ' + esc(d.denomination || d.name), h);
+  };
+  x.onerror = function() { openModal('ⓘ', '<p class="muted">Erreur réseau.</p>'); };
+  x.send();
+}
+
+function addMed() {
+  var name = document.getElementById('new-name').value.trim();
   if (!name) return;
-  const morning = document.getElementById('m-morning').checked ? 1 : 0;
-  const midday = document.getElementById('m-midday').checked ? 1 : 0;
-  const evening = document.getElementById('m-evening').checked ? 1 : 0;
-  await fetch('/api/add', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, morning, midday, evening}) });
-  document.getElementById('new-name').value = '';
-  document.getElementById('new-dosage').value = '';
-  loadMeds();
+  document.getElementById('link-status').style.display = 'none';
+  // On cherche d'abord la fiche officielle pour la proposer (pas d'ajout en double)
+  var x = new XMLHttpRequest();
+  x.open('GET', '/api/info_search?q=' + encodeURIComponent(name) + '&_=' + Date.now(), true);
+  x.onload = function() {
+    var d = {};
+    try { d = JSON.parse(x.responseText); } catch (e) {}
+    if (d.candidates && d.candidates.length) renderCandidates(name, d.candidates);
+    else doAddMed(name, null);
+  };
+  x.onerror = function() { doAddMed(name, null); };
+  x.send();
+}
+
+function renderCandidates(name, cands) {
+  var html = '<div class="cand-title">Quelle est la fiche officielle ? <span class="muted small">(visible ensuite via le bouton ⓘ)</span></div>';
+  for (var i = 0; i < cands.length; i++) {
+    var c = cands[i];
+    html += '<div class="cand-item" data-cis="' + esc(c.cis) + '">'
+         +  '<div class="cand-name">' + esc(c.name) + '</div>'
+         +  '<div class="muted small">' + esc(c.forme) + (c.voie ? ' · ' + esc(c.voie) : '') + '</div>'
+         +  '</div>';
+  }
+  html += '<button class="btn-ghost" onclick="cancelCandidates()">Aucune fiche / ajouter simplement</button>';
+  var box = document.getElementById('cand-box');
+  box.innerHTML = html;
+  box.style.display = 'block';
+  var items = box.getElementsByClassName('cand-item');
+  for (var j = 0; j < items.length; j++) {
+    (function(cis) {
+      items[j].onclick = function() { doAddMed(name, cis); };
+    })(cands[j].cis);
+  }
+  try { box.scrollIntoView(); } catch (e) {}
+}
+
+function cancelCandidates() { doAddMed(document.getElementById('new-name').value.trim(), null); }
+
+function doAddMed(name, cis) {
+  var morning = document.getElementById('m-morning').checked ? 1 : 0;
+  var midday = document.getElementById('m-midday').checked ? 1 : 0;
+  var evening = document.getElementById('m-evening').checked ? 1 : 0;
+  var box = document.getElementById('cand-box');
+  box.style.display = 'none';
+  box.innerHTML = '';
+  var x = new XMLHttpRequest();
+  x.open('POST', '/api/add', true);
+  x.setRequestHeader('Content-Type', 'application/json');
+  x.onload = function() {
+    var d = {};
+    try { d = JSON.parse(x.responseText); } catch (e) {}
+    document.getElementById('new-name').value = '';
+    loadMeds();
+    if (cis && d && d.id) linkInfo(d.id, cis);
+  };
+  x.send(JSON.stringify({ name: name, morning: morning, midday: midday, evening: evening, cis: cis || null }));
+}
+
+function linkInfo(medId, cis) {
+  var st = document.getElementById('link-status');
+  st.style.display = 'block';
+  st.textContent = '📖 Récupération de la fiche officielle...';
+  var x = new XMLHttpRequest();
+  x.open('POST', '/api/link', true);
+  x.setRequestHeader('Content-Type', 'application/json');
+  x.onload = function() {
+    var d = {};
+    try { d = JSON.parse(x.responseText); } catch (e) {}
+    if (d.ok) {
+      st.textContent = '✅ Fiche liée : ' + (d.denomination || '');
+      setTimeout(function() { st.style.display = 'none'; }, 5000);
+    } else {
+      st.textContent = '⚠️ Fiche non récupérée (' + (d.error || 'erreur') + ') — le médicament est bien enregistré.';
+    }
+    loadMeds();
+  };
+  x.onerror = function() {
+    st.textContent = '⚠️ Réseau indisponible — médicament enregistré sans fiche.';
+    loadMeds();
+  };
+  x.send(JSON.stringify({ id: medId, cis: cis }));
 }
 
 async function delMed(id) {
@@ -380,12 +601,21 @@ button:hover { background:#0056b3; }
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/login':
+        if self.path == '/login' or self.path.startswith('/login?'):
+            # En cas d'identifiants errones, le handler redirige vers
+            # /login?error=1 : sans message affiche, la page rechargeait en
+            # silence et donnait l'impression que l'application etait cassee
+            # (signale le 27/10/2026).
+            page = LOGIN_HTML
+            if 'error=1' in self.path:
+                page = LOGIN_HTML.replace(
+                    '</form>',
+                    '</form><div class="error">Identifiants incorrects.</div>')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('Cache-Control', 'no-store')
             self.end_headers()
-            self.wfile.write(LOGIN_HTML.encode())
+            self.wfile.write(page.encode())
         elif self.path == '/logout':
             self._logout()
         elif not check_auth(self):
@@ -512,10 +742,50 @@ class Handler(BaseHTTPRequestHandler):
                 days.append({"date": ds, "intakes": [{"meal": r[0], "name": r[1], "taken": 1} for r in intakes]})
             conn.close()
             self._json({"days": days})
+        elif self.path.startswith('/api/info_search'):
+            # Propose des fiches officielles (BDPM) pour un nom saisi à l'ajout.
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get('q', [''])[0]
+            cands = []
+            if q.strip():
+                try:
+                    cands = [{"cis": r["cis"], "name": r["name"], "forme": r["forme"],
+                              "voie": r["voie"]} for r in mi().search_cis(q, limit=6)]
+                except Exception as e:
+                    print(f"! info_search: {e}")
+            self._json({"query": q, "candidates": cands})
+        elif self.path.startswith('/api/med_info'):
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            med_id = qs.get('id', [None])[0]
+            cis = qs.get('cis', [None])[0]
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            name = ""
+            if med_id:
+                row = c.execute("SELECT name, cis FROM meds WHERE id=?", (med_id,)).fetchone()
+                if row:
+                    name, cis = row[0], row[1]
+            out = {"linked": False, "name": name, "cis": cis}
+            if cis:
+                r = c.execute("SELECT * FROM med_info WHERE cis=?", (str(cis),)).fetchone()
+                if r:
+                    cols = [d[0] for d in c.execute("SELECT * FROM med_info LIMIT 0").description]
+                    d = dict(zip(cols, r))
+                    out.update({
+                        "linked": True,
+                        "denomination": d["denomination"],
+                        "resume": d["resume"] or "",
+                        "indications": d["indications"] or "",
+                        "posologie": d["posologie"] or "",
+                        "source": d["source"] or "",
+                        "fetched_at": d["fetched_at"] or "",
+                    })
+            conn.close()
+            self._json(out)
         elif self.path.startswith('/api/meds'):
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            meds = [{"id":r[0],"name":r[1],"dosage":r[2],"morning":r[3],"midday":r[4],"evening":r[5]} for r in c.execute("SELECT id,name,dosage,morning,midday,evening FROM meds WHERE active=1 ORDER BY name")]
+            meds = [{"id":r[0],"name":r[1],"dosage":r[2],"morning":r[3],"midday":r[4],"evening":r[5],
+                     "cis": r[6]} for r in c.execute("SELECT id,name,dosage,morning,midday,evening,cis FROM meds WHERE active=1 ORDER BY name")]
             conn.close()
             self._json(meds)
         elif self.path.startswith('/api/disabled'):
@@ -585,10 +855,45 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok":True})
 
         elif self.path.startswith('/api/add'):
-            c.execute("INSERT INTO meds (name, dosage, morning, midday, evening) VALUES (?,?,?,?,?)",
-                (body["name"], body.get("dosage",""), body.get("morning",1), body.get("midday",1), body.get("evening",1)))
+            cur = c.execute("INSERT INTO meds (name, dosage, morning, midday, evening, cis) VALUES (?,?,?,?,?,?)",
+                (body["name"], body.get("dosage",""), body.get("morning",1), body.get("midday",1),
+                 body.get("evening",1), body.get("cis") or None))
             conn.commit()
-            self._json({"ok":True})
+            self._json({"ok":True, "id": cur.lastrowid})
+
+        elif self.path.startswith('/api/link'):
+            # Associe un médicament de l'appli à une fiche officielle BDPM.
+            med_id = body["id"]
+            cis = str(body["cis"])
+            try:
+                mod = mi()
+                data = mod.fetch_medicament(cis)
+                sec = data["sections"]
+                rec = {
+                    "denomination": "", "forme": "", "posologie": sec.get("posologie", ""),
+                    "contre_indications": sec.get("contre_indications", ""),
+                    "conservation": (sec.get("conservation", "") + "\n" + sec.get("conservation_prec", "")).strip(),
+                    "notice_pourquoi": sec.get("notice_pourquoi", ""),
+                    "indications": sec.get("indications", ""),
+                }
+                ident = mod.by_cis(cis)
+                if ident:
+                    rec["denomination"] = ident["name"]
+                    rec["forme"] = ident["forme"]
+                # Ne jamais écraser un résumé déjà rédigé (celui de l'agent) :
+                # store() fait COALESCE(excluded.resume, med_info.resume).
+                old = c.execute("SELECT resume FROM med_info WHERE cis=?", (cis,)).fetchone()
+                keep = bool(old and old[0] and old[0].strip())
+                mod.store(cis, data, name=rec["denomination"], forme=rec["forme"],
+                          voie="", statut="",
+                          resume=None if keep else build_auto_resume(rec))
+                c.execute("UPDATE meds SET cis=? WHERE id=?", (cis, med_id))
+                conn.commit()
+                self._json({"ok": True, "cis": cis, "denomination": rec["denomination"]})
+            except Exception as e:
+                print(f"! link cis={cis}: {e}")
+                self._json({"ok": False, "error": str(e)[:120]})
+
 
         elif self.path.startswith('/api/delete'):
             c.execute("UPDATE meds SET active=0 WHERE id=?", (body["id"],))
