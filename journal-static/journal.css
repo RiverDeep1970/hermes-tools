@@ -58,7 +58,7 @@ body{font-family:Georgia,'Times New Roman',serif;background:#f5f3ef;color:#1a1a1
 .ticker-item .ch.down{color:#f87171}
 .ticker-item .sep{color:#3a3a5e}
 @keyframes scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
-@media(max-width:480px){.hd h1{font-size:22px}.tab{padding:8px 12px;font-size:12px}.crypto-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:480px){.hd h1{font-size:22px}.tab{padding:8px 9px;font-size:11.5px}.tab .badge{margin-left:4px;padding:1px 5px}.crypto-grid{grid-template-columns:1fr 1fr}}
 
 /* ===== Agenda — pack visuel (etape B) ===== */
 :root{--sticky-top:88px}
