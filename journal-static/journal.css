@@ -1,0 +1,213 @@
+/* Journal — feuille de style (extraite du serveur) */
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Georgia,'Times New Roman',serif;background:#f5f3ef;color:#1a1a1a;padding:0}
+.hd{background:#1a1a2e;color:#e8d5b7;padding:14px 16px;text-align:center;position:sticky;top:0;z-index:10}
+.hd h1{font-size:28px;letter-spacing:3px;font-weight:400}
+.hd .ed{font-size:12px;color:#a09070;margin-top:2px}
+.tabs{display:flex;background:#2a2a3e;overflow-x:auto;position:sticky;top:52px;z-index:9}
+.tab{padding:10px 16px;color:#a09070;cursor:pointer;white-space:nowrap;font-size:14px;border-bottom:2px solid transparent;transition:all .2s}
+.tab:hover{color:#e8d5b7;background:rgba(255,255,255,.05)}
+.tab.active{color:#e8d5b7;border-bottom-color:#c9a84c;font-weight:700}
+.tab .badge{display:none;background:#c9a84c;color:#1a1a2e;font-size:10px;padding:1px 6px;border-radius:8px;margin-left:6px;font-weight:700}
+.tab .badge.show{display:inline}
+.wp{padding:12px;max-width:800px;margin:0 auto}
+.pane{display:none}
+.pane.active{display:block}
+.art{border-bottom:1px solid #ddd;padding:14px 0}
+.art:last-child{border:0}
+.art .src{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+.art .src .tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;margin-left:6px}
+.tag-newsletter{background:#e8f0fe;color:#1967d2}
+.tag-youtube{background:#fce8e6;color:#c5221f}
+.tag-echecs{background:#e8f5e9;color:#1b8a3d;font-weight:700}
+.tag-techno{background:#f3e8fd;color:#7c3aed;font-weight:700}
+.tag-crypto{background:#fff3e0;color:#e65100}
+.tag-agenda{background:#f3e8fd;color:#7c3aed}
+.tag-event-sport{background:#fce8e6;color:#c5221f;font-weight:700}
+.tag-event-personal{background:#e8f0fe;color:#1967d2}
+.tag-marquante{background:#fef3c7;color:#92400e;font-weight:700}
+.tag-video{background:#fce8e6;color:#c5221f}
+.tag-article{background:#e8f0fe;color:#1967d2}
+.tag-post{background:#fff3e0;color:#e65100}
+.art h3{font-size:17px;margin-bottom:4px;line-height:1.3}
+.art h3 a{color:#1a1a2e;text-decoration:none}
+.art h3 a:hover{color:#c9a84c}
+.art p{font-size:14px;color:#444;line-height:1.5;margin-bottom:4px}
+.art .meta{font-size:11px;color:#999;margin-top:2px}
+.art .pts{padding-left:16px;margin:6px 0}
+.art .pts li{font-size:13px;color:#555;margin:2px 0}
+.unread{border-left:3px solid #c9a84c;padding-left:10px}
+.crypto-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}
+.crypto-item{border:1px solid #e0d5c0;border-radius:6px;padding:8px;text-align:center;background:#faf8f5}
+.crypto-item .sym{font-weight:700;font-size:14px}
+.crypto-item .pr{font-size:15px;margin:2px 0}
+.crypto-item .ch{font-size:12px}
+.crypto-item .up{color:#1b8a3d}
+.crypto-item .down{color:#c5221f}
+.agenda-item{padding:6px 0;border-bottom:1px solid #eee;font-size:14px}
+.agenda-item:last-child{border:0}
+/* Ticker crypto */
+.ticker-wrap{background:#1a1a2e;border-top:1px solid #2a2a3e;border-bottom:1px solid #2a2a3e;overflow:hidden;position:sticky;top:88px;z-index:8;height:28px;line-height:28px}
+.ticker{display:inline-flex;white-space:nowrap;animation:scroll 40s linear infinite}
+.ticker:hover{animation-play-state:paused}
+.ticker-item{display:inline-flex;align-items:center;gap:4px;padding:0 14px;font-size:12px;flex-shrink:0}
+.ticker-item .sym{font-weight:700;color:#c9a84c}
+.ticker-item .pr{color:#ddd}
+.ticker-item .ch{font-size:11px}
+.ticker-item .ch.up{color:#34d399}
+.ticker-item .ch.down{color:#f87171}
+.ticker-item .sep{color:#3a3a5e}
+@keyframes scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+@media(max-width:480px){.hd h1{font-size:22px}.tab{padding:8px 12px;font-size:12px}.crypto-grid{grid-template-columns:1fr 1fr}}
+
+/* ===== Agenda — pack visuel (etape B) ===== */
+:root{--sticky-top:88px}
+.ev-section{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#a09070;margin:16px 0 6px;font-weight:700}
+.day-hd{display:flex;align-items:center;justify-content:space-between;background:#f5f3ef;position:sticky;top:var(--sticky-top);z-index:7;padding:7px 0;margin:0;border-bottom:2px solid #e0d5c0;font-size:13px;font-weight:700;color:#1a1a2e}
+.day-hd__label{text-transform:capitalize}
+.day-hd__count{background:#e0d5c0;color:#1a1a2e;font-size:11px;padding:0 7px;border-radius:9px;font-weight:700}
+.ev{display:flex;align-items:stretch;background:#faf8f5;border:1px solid #ece6da;border-radius:6px;margin:6px 0;overflow:hidden;min-height:44px}
+.ev__bar{flex:0 0 4px;width:4px;background:#1967d2}
+.ev--sport .ev__bar{background:#c5221f}
+.ev--serie .ev__bar{background:#7c3aed}
+.ev--jeu .ev__bar{background:#e65100}
+.ev--personal .ev__bar{background:#1967d2}
+.ev__main{flex:1;padding:8px 10px;display:flex;flex-direction:column;justify-content:center}
+.ev__top{display:flex;align-items:center;gap:6px}
+.ev__icon{display:inline-flex;align-items:center;flex-shrink:0;color:#1967d2}
+.ev--sport .ev__icon{color:#c5221f}
+.ev--serie .ev__icon{color:#7c3aed}
+.ev--jeu .ev__icon{color:#e65100}
+.ev--personal .ev__icon{color:#1967d2}
+.ev__title{font-size:14px;color:#1a1a2e;font-weight:600;line-height:1.25}
+.ev__meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:11px;color:#888;margin-top:3px}
+.ev__cal{font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#a09070}
+.ev__time{font-variant-numeric:tabular-nums;color:#555;font-weight:700}
+.ev__countdown{background:#eef2f7;color:#1967d2;border-radius:9px;padding:0 7px;font-weight:700}
+.ev--today{background:#fffaf0;border-color:#c9a84c}
+.ev--today .ev__title{color:#8a6d1f}
+.next-ev{background:linear-gradient(135deg,#1a1a2e,#2a2a3e);color:#e8d5b7;border-radius:8px;padding:12px 14px;margin:2px 0 10px;border-left:4px solid #c9a84c}
+.next-ev__label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:#c9a84c;font-weight:700}
+.next-ev__title{font-size:17px;margin:4px 0 3px;color:#fff;line-height:1.25}
+.next-ev__meta{font-size:12px;color:#a09070;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.next-ev__meta .ev__cal{color:#c9a84c}
+.next-ev__countdown{background:rgba(201,168,76,.2);color:#e8d5b7;border-radius:9px;padding:0 7px;font-weight:700}
+.legende{display:flex;flex-wrap:wrap;gap:12px;margin:0 0 8px;font-size:11px;color:#666}
+.legende__item{display:inline-flex;align-items:center;gap:4px}
+.legende__dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+.legende__dot--sport{background:#c5221f}
+.legende__dot--serie{background:#7c3aed}
+.legende__dot--jeu{background:#e65100}
+.legende__dot--personal{background:#1967d2}
+
+/* ===== Agenda — vue Semaine (etape C) ===== */
+.view-toggle{display:inline-flex;border:1px solid #e0d5c0;border-radius:8px;overflow:hidden;margin:2px 0 10px;background:#faf8f5}
+.view-toggle__btn{appearance:none;-webkit-appearance:none;border:0;background:transparent;color:#8a7a5c;font-family:inherit;font-size:13px;padding:8px 18px;min-height:40px;cursor:pointer;font-weight:700}
+.view-toggle__btn.active{background:#c9a84c;color:#1a1a2e}
+.week-nav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 10px}
+.week-nav__btn{appearance:none;-webkit-appearance:none;border:1px solid #e0d5c0;background:#faf8f5;color:#1a1a2e;font-family:inherit;font-size:20px;line-height:1;width:44px;height:44px;border-radius:8px;cursor:pointer;font-weight:700;padding:0}
+.week-nav__btn:hover{background:#f0ead9}
+.week-nav__label{flex:1;text-align:center;font-size:14px;font-weight:700;color:#1a1a2e;text-transform:capitalize}
+.week-grid{display:grid;grid-template-columns:1fr;gap:8px;margin-top:4px}
+.week-col{display:none;border:1px solid #ece6da;border-radius:8px;background:#fff;overflow:hidden;min-height:80px}
+.week-col--active{display:block}
+.week-col__hd{display:flex;align-items:baseline;gap:6px;padding:6px 8px;background:#f5f3ef;border-bottom:1px solid #ece6da;font-weight:700;color:#1a1a2e}
+.week-col__hd--today{background:#fffaf0;border-bottom-color:#c9a84c}
+.week-col__dow{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#a09070}
+.week-col__num{font-size:15px}
+.week-cell{padding:6px;min-height:56px}
+.week-cell .ev{margin:4px 0}
+.week-empty{color:#b3a98f;font-size:12px;font-style:italic;padding:8px 2px;text-align:center}
+.week-cell__allday{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#a09070;font-weight:700;margin:6px 0 2px;border-top:1px dashed #e0d5c0;padding-top:6px}
+@media(min-width:700px){
+  .week-grid{grid-template-columns:repeat(7,1fr)}
+  .week-col{display:block}
+  .week-cell{min-height:120px}
+}
+
+/* --- Lisibilité de la vue Semaine (correction 18/10/2026) ---
+   7 colonnes dans la largeur par défaut (800 px) écrasaient les cartes :
+   titres cassés en 5 lignes et icône chevauchante. On élargit le conteneur
+   quand la vue Semaine est active (classe posée par syncAgendaBodyClass),
+   et on resserre la typographie à l'intérieur des colonnes. */
+@media(min-width:900px){
+  body.agenda-week .wp{max-width:1180px}
+}
+.week-col .ev__main{padding:6px 8px}
+.week-col .ev__top{align-items:flex-start}
+.week-col .ev__icon{margin-top:1px}
+.week-col .ev__icon svg{width:12px;height:12px;display:block}
+.week-col .ev__title{font-size:12.5px;line-height:1.3;overflow-wrap:break-word;word-break:break-word}
+.week-col .ev__meta{font-size:10px;gap:5px;margin-top:3px}
+.week-col .ev__cal{font-size:10px;letter-spacing:.3px}
+.week-col__num{font-size:14px}
+
+/* ===== Onglet Reddit — rendu dedie ===== */
+.rd-group{margin:8px 0 14px}
+.rd-group__hd{display:flex;align-items:center;justify-content:space-between;gap:8px;background:#1a1a2e;color:#e8d5b7;text-decoration:none;padding:8px 12px;border-radius:6px;font-size:13px;font-weight:700;letter-spacing:1px;overflow-wrap:break-word;word-break:break-word}
+.rd-group__hd:hover{color:#c9a84c}
+.rd-group__count{flex-shrink:0;background:#c9a84c;color:#1a1a2e;font-size:11px;padding:0 7px;border-radius:9px;font-weight:700}
+.rd-post{padding:10px 0}
+.rd-post h3{font-size:16px;overflow-wrap:break-word;word-break:break-word}
+.rd-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:11px;color:#888;margin-top:4px}
+.rd-chip{display:inline-flex;align-items:center;gap:3px;border-radius:9px;padding:0 7px;font-weight:700}
+.rd-chip--rang{background:#f5f3ef;color:#a09070}
+.rd-chip--score{background:#fff3e0;color:#e65100}
+.rd-chip--com{background:#e8f0fe;color:#1967d2}
+.rd-author{color:#a09070}
+.rd-date{color:#bbb}
+.rd-sum{margin-top:6px}
+.rd-sum summary{cursor:pointer;font-size:12px;color:#a09070;text-transform:uppercase;letter-spacing:1px;font-weight:700;list-style:none}
+.rd-sum summary::-webkit-details-marker{display:none}
+.rd-sum summary::before{content:"\25B8 ";color:#c9a84c}
+.rd-sum[open] summary::before{content:"\25BE "}
+.rd-sum__txt{font-size:13px;color:#555;line-height:1.5;margin-top:5px;overflow-wrap:break-word;word-break:break-word}
+
+/* Rapport par subreddit : en-tete + synthese FR + points cles + fils */
+.rd-group--synth{margin:10px 0 18px}
+.rd-synth__meta{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:11px;color:#a09070;margin-top:6px}
+.rd-synth__24h{background:#eef3ec;color:#2e7d32;border-radius:9px;padding:0 7px;font-weight:700}
+.rd-synth__txt{font-size:14px;color:#333;line-height:1.55;margin-top:8px;overflow-wrap:break-word;word-break:break-word}
+.rd-points{background:#faf8f3;border-left:3px solid #c9a84c;border-radius:4px;padding:8px 12px;margin-top:10px}
+.rd-points__hd{font-size:11px;color:#a09070;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:4px}
+.rd-points__list{margin:0;padding-left:18px}
+.rd-points__list li{font-size:13px;color:#444;line-height:1.5;margin:3px 0;overflow-wrap:break-word;word-break:break-word}
+.rd-fils{margin-top:12px}
+.rd-fils__hd{font-size:11px;color:#a09070;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:2px}
+.rd-fil{padding:8px 0;border-top:1px solid #eee}
+.rd-fil h3{font-size:15px;overflow-wrap:break-word;word-break:break-word}
+.rd-pourquoi{font-size:12.5px;color:#666;font-style:italic;line-height:1.45;margin-top:4px;overflow-wrap:break-word;word-break:break-word}
+
+/* ===== Onglet Crypto — watchlist + mouvements du jour ===== */
+.crypto-upd{font-size:11px;color:#a09070;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin:2px 0 10px}
+.crypto-upd.stale{color:#c5221f}
+.crypto-cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 6px}
+@media(min-width:700px){.crypto-cards{grid-template-columns:repeat(3,1fr)}}
+.ccard{border:1px solid #e0d5c0;border-radius:8px;background:#faf8f5;padding:10px 12px;display:flex;flex-direction:column;gap:6px;min-height:96px}
+.ccard__hd{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.ccard__sym{font-weight:700;font-size:14px;color:#1a1a2e;letter-spacing:.5px}
+.ccard__pr{font-size:15px;color:#1a1a2e;font-variant-numeric:tabular-nums}
+.ccard__deltas{display:flex;flex-wrap:wrap;gap:6px}
+.cdelta{font-size:11px;font-weight:700;border-radius:9px;padding:1px 7px;background:#f0ede8;color:#888}
+.cdelta--up{background:#e8f5e9;color:#1b8a3d}
+.cdelta--down{background:#fce8e6;color:#c5221f}
+.cdelta--na{background:#f5f3ef;color:#b3a98f}
+.ccard__spark{margin-top:auto}
+.ccard__spark--empty{font-size:10px;color:#b3a98f;font-style:italic}
+.cspark{width:100%;height:26px;display:block}
+.cspark polyline{fill:none;stroke:#c9a84c;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round}
+.crypto-h{font-size:11px;text-transform:uppercase;letter-spacing:2px;color:#a09070;font-weight:700;margin:18px 0 8px}
+.crypto-movers{display:flex;flex-wrap:wrap;gap:8px}
+.cmover{font-size:13px;font-weight:700;border-radius:9px;padding:3px 10px;background:#f5f3ef;color:#555}
+.cmover--up{background:#e8f5e9;color:#1b8a3d}
+.cmover--down{background:#fce8e6;color:#c5221f}
+.crypto-list{border:1px solid #ece6da;border-radius:8px;overflow:hidden;background:#faf8f5}
+.crow{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid #f0ede8;font-size:13px}
+.crow:last-child{border-bottom:0}
+.crow__sym{flex:0 0 52px;font-weight:700;color:#1a1a2e}
+.crow__pr{flex:1;color:#555;font-variant-numeric:tabular-nums}
+.crow__ch{font-weight:700;font-variant-numeric:tabular-nums}
+.crow__ch.up{color:#1b8a3d}
+.crow__ch.down{color:#c5221f}
+.crypto-note{margin-top:14px;font-size:12px;color:#a09070;font-style:italic;line-height:1.45}
+.crypto-empty{padding:20px;text-align:center;color:#888}
