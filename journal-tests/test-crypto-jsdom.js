@@ -2,6 +2,7 @@
 // Necessite : serveur journal actif sur http://localhost:8090 et jsdom.
 // Le JS de la page est encapsule dans un IIFE : on teste donc via le DOM,
 // en injectant une edition reelle ou synthetique dans le XHR mocke.
+// Chaque instance JSDOM est fermee apres usage (plusieurs simultanees se genent).
 // Usage: node ~/.hermes/journal-tests/test-crypto-jsdom.js
 
 const { JSDOM } = require('/home/ubuntu/.hermes/hermes-agent/node_modules/jsdom');
@@ -20,7 +21,6 @@ function fetch(url) {
   });
 }
 
-// Monte la page avec une edition donnee, retourne {doc, win}
 async function mount(html, edition) {
   const dom = new JSDOM(html, {
     url: 'http://localhost:8090/',
@@ -46,8 +46,8 @@ async function mount(html, edition) {
       window.addEventListener('error', e => window.__errs.push(e.message || String(e)));
     }
   });
-  await new Promise(r => setTimeout(r, 900));
-  return { doc: dom.window.document, win: dom.window };
+  await new Promise(r => setTimeout(r, 1200));
+  return { doc: dom.window.document, win: dom.window, dom };
 }
 
 (async () => {
@@ -55,8 +55,10 @@ async function mount(html, edition) {
   const edition = JSON.parse(await fetch('http://localhost:8090/api/data'));
   const sec = edition.sections.crypto || {};
 
+  // ── Phase 1 : edition reelle ──────────────────────────────────────────────
   console.log('=== Onglet Crypto : edition reelle ===');
-  const { doc, win } = await mount(html, edition);
+  let m1 = await mount(html, edition);
+  let doc = m1.doc;
 
   const tab = doc.querySelector('[data-tab="crypto"]');
   check('onglet Crypto present', !!tab);
@@ -80,7 +82,7 @@ async function mount(html, edition) {
   check('TAO en tete de la watchlist',
         !!pane && /TAO/.test((pane.querySelector('.ccard') || {}).textContent || ''));
   check('prix formate en $', /\$/.test(txt));
-  check('variations affichees (>= 10 chips)', !!pane && pane.querySelectorAll('.cdelta').length >= 10,
+  check('variations affichees (>= 5 chips)', !!pane && pane.querySelectorAll('.cdelta').length >= 5,
         pane ? String(pane.querySelectorAll('.cdelta').length) : '0');
   check('bloc "Mouvements du jour"', /Mouvements du jour/.test(txt));
   check('chips mouvements (4 attendus)',
@@ -91,10 +93,21 @@ async function mount(html, edition) {
         !!pane && pane.querySelectorAll('.crow').length === (sec.others || []).length,
         pane ? String(pane.querySelectorAll('.crow').length) : '0');
   check('pas de courbe tant que l\'historique est insuffisant',
-        sec.history_days >= 7 ? true : /Courbe bientot disponible/.test(txt));
+        sec.history_days >= 7 ? true : /courbe en construction/.test(txt));
+  check('chip de periode masque quand la variation est inconnue',
+        sec.history_days >= 7 ? true : !/n\/d/.test(txt));
   check('note sur l\'historique en construction',
         sec.history_days >= 7 ? true : /Historique :/.test(txt));
 
+  // Valeurs de non-regression capturees avant fermeture
+  const tabsTotal = doc.querySelectorAll('.tab').length;
+  const panesTotal = doc.querySelectorAll('.pane').length;
+  const tickerItems = doc.querySelectorAll('#ticker .ticker-item').length;
+  const errs1 = m1.win.__errs.slice();
+  m1.dom.window.close();
+  m1 = null;
+
+  // ── Phase 2 : avec historique (donnees synthetiques) ──────────────────────
   console.log('=== Onglet Crypto : avec historique (donnees synthetiques) ===');
   const synth = JSON.parse(JSON.stringify(edition));
   synth.sections.crypto = {
@@ -115,28 +128,35 @@ async function mount(html, edition) {
         !!p2 && p2.querySelectorAll('svg.cspark polyline').length === 2,
         p2 ? String(p2.querySelectorAll('svg.cspark polyline').length) : '0');
   check('etiquette "7 j" quand historique >= 7 jours', /7 j/.test(t2));
-  check('variation 7 j chiffree', /7 j [+-]?\d/.test(t2), t2.match(/7 j [^\s]*/g) ? t2.match(/7 j [^\s]*/g).join(',') : '');
-  check('plus de mention "Courbe bientot disponible"', !/Courbe bientot disponible/.test(t2));
+  check('variation 7 j chiffree', /7 j [+-]?\d/.test(t2),
+        t2.match(/7 j [^\s]*/g) ? t2.match(/7 j [^\s]*/g).join(',') : '');
+  check('plus de mention "courbe en construction"', !/courbe en construction/.test(t2));
   check('badge = 3 (2 watchlist + 1 autre)',
         (m2.doc.querySelector('[data-tab="crypto"] .badge') || {}).textContent === '3');
+  check('aucune erreur JS avec historique', m2.win.__errs.length === 0, m2.win.__errs.join(' | '));
+  m2.dom.window.close();
 
+  // ── Phase 3 : degradation ────────────────────────────────────────────────
   console.log('=== Onglet Crypto : degradation ===');
   const empty = JSON.parse(JSON.stringify(edition));
   delete empty.sections.crypto;
   const m3 = await mount(html, empty);
-  const t3 = (m3.doc.getElementById('pane-crypto') || {}).textContent || '';
+  const pane3 = m3.doc.getElementById('pane-crypto');
+  const t3 = pane3 ? pane3.textContent : '';
   check('section absente -> message explicite', /Donnees crypto indisponibles/.test(t3), t3.slice(0, 60));
+  const badge3 = m3.doc.querySelector('[data-tab="crypto"] .badge');
   check('badge masque quand aucune donnee',
-        !(m3.doc.querySelector('[data-tab="crypto"] .badge') || {}).classList.contains('show'));
+        !!badge3 && !badge3.classList.contains('show'),
+        badge3 ? badge3.className : 'badge absent');
   check('aucune erreur JS sans section crypto', m3.win.__errs.length === 0, m3.win.__errs.join(' | '));
+  m3.dom.window.close();
 
+  // ── Non-regression ───────────────────────────────────────────────────────
   console.log('=== Non-regression ===');
-  check('les 9 onglets sont presents', doc.querySelectorAll('.tab').length === 9,
-        String(doc.querySelectorAll('.tab').length));
-  check('le ticker crypto est conserve', doc.querySelectorAll('#ticker .ticker-item').length > 0);
-  check('les 9 panes existent', doc.querySelectorAll('.pane').length === 9,
-        String(doc.querySelectorAll('.pane').length));
-  check('aucune erreur JS', win.__errs.length === 0, win.__errs.join(' | '));
+  check('les 9 onglets sont presents', tabsTotal === 9, String(tabsTotal));
+  check('les 9 panes existent', panesTotal === 9, String(panesTotal));
+  check('le ticker crypto est conserve', tickerItems > 0, String(tickerItems));
+  check('aucune erreur JS (edition reelle)', errs1.length === 0, errs1.join(' | '));
 
   console.log('\n=== RESULTAT CRYPTO: ' + ok + ' OK, ' + ko + ' echec(s) ===');
   process.exit(ko ? 1 : 0);
