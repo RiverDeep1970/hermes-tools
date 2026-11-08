@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
-"""Journal web server - sert l'edition courante."""
+"""Journal web server - sert l'edition courante et la page videos."""
 import json, os, re
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 PORT = 8090
 BASE = os.path.expanduser("~/.hermes/editions")
 READ_STATUS_FILE = os.path.join(BASE, "read_status.json")
+STATIC_DIR = os.path.expanduser("~/.hermes/journal-static")
+STATIC_MIME = {"journal.css": "text/css; charset=utf-8", "journal.js": "application/javascript; charset=utf-8"}
+
+# --- videos ---
+VIDEO_DIR = os.path.expanduser("~/.hermes/video-journal/out")
+VIDEO_INDEX = os.path.expanduser("~/.hermes/video-journal/videos.json")
+VIDEO_STATE = os.path.expanduser("~/.hermes/video-journal/production.json")
+PRODUCTION_MAX_AGE = 45 * 60  # au-dela, l'etat est considere perime (script tue)
+MEDIA_MIME = {"mp4": "video/mp4", "jpg": "image/jpeg", "png": "image/png",
+              "txt": "text/plain; charset=utf-8"}
+# nom de fichier strict : [web/]slug.ext, aucune remontee de chemin possible
+MEDIA_RE = re.compile(r"^(?:web/)?[A-Za-z0-9][A-Za-z0-9._-]*\.(?:mp4|jpg|png|txt)$")
 
 def load_read_status():
     if not os.path.exists(READ_STATUS_FILE):
@@ -20,6 +32,36 @@ def save_read_status(data):
     with open(READ_STATUS_FILE, "w") as f:
         json.dump(data, f)
 
+def load_videos():
+    if not os.path.exists(VIDEO_INDEX):
+        return {"updated": "", "videos": []}
+    try:
+        with open(VIDEO_INDEX) as f:
+            data = json.load(f)
+        if not isinstance(data, dict) or "videos" not in data:
+            return {"updated": "", "videos": []}
+        return data
+    except:
+        return {"updated": "", "videos": []}
+
+def load_production():
+    """Renvoie l'etat de production en cours, ou None (absent ou perime)."""
+    if not os.path.exists(VIDEO_STATE):
+        return None
+    try:
+        with open(VIDEO_STATE) as f:
+            d = json.load(f)
+        started = d.get("started", "")
+        from datetime import datetime
+        t = datetime.strptime(started, "%Y-%m-%dT%H:%M:%SZ")
+        age = (datetime.utcnow() - t).total_seconds()
+        if age < 0 or age > PRODUCTION_MAX_AGE:
+            return None
+        return d
+    except Exception:
+        return None
+
+
 # Journal HTML template
 PAGE = """<!DOCTYPE html>
 <html lang="fr">
@@ -27,352 +69,217 @@ PAGE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Le Journal</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:Georgia,'Times New Roman',serif;background:#f5f3ef;color:#1a1a1a;padding:0}
-.hd{background:#1a1a2e;color:#e8d5b7;padding:14px 16px;text-align:center;position:sticky;top:0;z-index:10}
-.hd h1{font-size:28px;letter-spacing:3px;font-weight:400}
-.hd .ed{font-size:12px;color:#a09070;margin-top:2px}
-.tabs{display:flex;background:#2a2a3e;overflow-x:auto;position:sticky;top:52px;z-index:9}
-.tab{padding:10px 16px;color:#a09070;cursor:pointer;white-space:nowrap;font-size:14px;border-bottom:2px solid transparent;transition:all .2s}
-.tab:hover{color:#e8d5b7;background:rgba(255,255,255,.05)}
-.tab.active{color:#e8d5b7;border-bottom-color:#c9a84c;font-weight:700}
-.tab .badge{display:none;background:#c9a84c;color:#1a1a2e;font-size:10px;padding:1px 6px;border-radius:8px;margin-left:6px;font-weight:700}
-.tab .badge.show{display:inline}
-.wp{padding:12px;max-width:800px;margin:0 auto}
-.pane{display:none}
-.pane.active{display:block}
-.art{border-bottom:1px solid #ddd;padding:14px 0}
-.art:last-child{border:0}
-.art .src{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
-.art .src .tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;margin-left:6px}
-.tag-newsletter{background:#e8f0fe;color:#1967d2}
-.tag-youtube{background:#fce8e6;color:#c5221f}
-.tag-echecs{background:#e8f5e9;color:#1b8a3d;font-weight:700}
-.tag-techno{background:#f3e8fd;color:#7c3aed;font-weight:700}
-.tag-crypto{background:#fff3e0;color:#e65100}
-.tag-agenda{background:#f3e8fd;color:#7c3aed}
-.tag-event-sport{background:#fce8e6;color:#c5221f;font-weight:700}
-.tag-event-personal{background:#e8f0fe;color:#1967d2}
-.tag-marquante{background:#fef3c7;color:#92400e;font-weight:700}
-.art h3{font-size:17px;margin-bottom:4px;line-height:1.3}
-.art h3 a{color:#1a1a2e;text-decoration:none}
-.art h3 a:hover{color:#c9a84c}
-.art p{font-size:14px;color:#444;line-height:1.5;margin-bottom:4px}
-.art .meta{font-size:11px;color:#999;margin-top:2px}
-.art .pts{padding-left:16px;margin:6px 0}
-.art .pts li{font-size:13px;color:#555;margin:2px 0}
-.unread{border-left:3px solid #c9a84c;padding-left:10px}
-.crypto-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}
-.crypto-item{border:1px solid #e0d5c0;border-radius:6px;padding:8px;text-align:center;background:#faf8f5}
-.crypto-item .sym{font-weight:700;font-size:14px}
-.crypto-item .pr{font-size:15px;margin:2px 0}
-.crypto-item .ch{font-size:12px}
-.crypto-item .up{color:#1b8a3d}
-.crypto-item .down{color:#c5221f}
-.agenda-item{padding:6px 0;border-bottom:1px solid #eee;font-size:14px}
-.agenda-item:last-child{border:0}
-/* Ticker crypto */
-.ticker-wrap{background:#1a1a2e;border-top:1px solid #2a2a3e;border-bottom:1px solid #2a2a3e;overflow:hidden;position:sticky;top:88px;z-index:8;height:28px;line-height:28px}
-.ticker{display:inline-flex;white-space:nowrap;animation:scroll 40s linear infinite}
-.ticker:hover{animation-play-state:paused}
-.ticker-item{display:inline-flex;align-items:center;gap:4px;padding:0 14px;font-size:12px;flex-shrink:0}
-.ticker-item .sym{font-weight:700;color:#c9a84c}
-.ticker-item .pr{color:#ddd}
-.ticker-item .ch{font-size:11px}
-.ticker-item .ch.up{color:#34d399}
-.ticker-item .ch.down{color:#f87171}
-.ticker-item .sep{color:#3a3a5e}
-@keyframes scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
-@media(max-width:480px){.hd h1{font-size:22px}.tab{padding:8px 12px;font-size:12px}.crypto-grid{grid-template-columns:1fr 1fr}}
-</style>
+<link rel="stylesheet" href="/static/journal.css">
 </head>
 <body>
-<div class="hd"><h1>Le Journal</h1><div class="ed" id="edition"></div></div>
+<div class="hd"><h1>Le Journal</h1><div class="ed" id="edition"></div><div class="navv"><a href="/videos">Vidéos</a></div></div>
 <div class="tabs" id="tabs"></div>
 <div class="ticker-wrap"><div class="ticker" id="ticker"></div></div>
 <div class="wp" id="content">Chargement...</div>
+<script src="/static/journal.js"></script>
+</body>
+</html>"""
+
+VIDEOS_PAGE = """<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Les Vidéos du Journal</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Georgia,'Times New Roman',serif;background:#f5f3ef;color:#1a1a1a}
+.hd{background:#1a1a2e;color:#e8d5b7;padding:14px 16px;text-align:center;position:sticky;top:0;z-index:10}
+.hd h1{font-size:28px;letter-spacing:3px;font-weight:400}
+.hd .ed{font-size:12px;color:#a09070;margin-top:2px}
+.hd .navv a{color:#c9a84c;font-size:13px;text-decoration:none}
+.hd .navv a:hover{text-decoration:underline}
+.wp{padding:14px;max-width:860px;margin:0 auto}
+.lead{font-size:13px;color:#666;margin-bottom:16px;line-height:1.5}
+.banner{display:none;background:#fdf6e3;border:1px solid #c9a84c;border-left:4px solid #c9a84c;color:#7a5c12;padding:11px 14px;border-radius:5px;margin-bottom:16px;font-size:13px;line-height:1.5}
+.banner.on{display:block}
+.banner b{color:#1a1a2e}
+.card{background:#fff;border:1px solid #e2ddd4;border-radius:6px;padding:14px;margin-bottom:18px}
+.card .date{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.card h2{font-size:19px;font-weight:400;color:#1a1a2e;margin-bottom:4px}
+.meta{font-size:12px;color:#999;margin-bottom:10px}
+.thumb{width:100%;max-width:480px;border-radius:4px;display:block;margin-bottom:12px;background:#1a1a2e}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.btns button{font-family:inherit;font-size:13px;padding:8px 14px;border:1px solid #c9a84c;background:#fff;color:#1a1a2e;border-radius:4px;cursor:pointer}
+.btns button:hover{background:#fdf8ec}
+.btns button.on{background:#c9a84c;color:#fff;font-weight:700}
+.btns a{font-family:inherit;font-size:13px;padding:8px 14px;border:1px solid #ddd;background:#fff;color:#666;border-radius:4px;text-decoration:none;line-height:1.2}
+.player{margin-bottom:2px}
+.chapters{margin-top:12px;border-top:1px solid #eee;padding-top:10px}
+.chapters .ch-hd{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#888;margin-bottom:6px}
+.chapters button.ch{display:block;width:100%;text-align:left;font-family:inherit;font-size:13px;line-height:1.35;padding:7px 9px;border:0;border-left:3px solid transparent;background:#faf9f6;color:#444;border-radius:3px;cursor:pointer;margin-bottom:3px}
+.chapters button.ch:hover{background:#f2efe8}
+.chapters button.ch.on{background:#fdf8ec;border-left-color:#c9a84c;color:#1a1a2e;font-weight:700}
+.chapters .ct{display:inline-block;min-width:44px;color:#c9a84c;font-variant-numeric:tabular-nums}
+.chapters button.ch.on .ct{color:#a8862c}
+.chapters .chtxt{display:inline-block;margin-top:7px;font-size:12px;color:#999;text-decoration:none}
+.chapters .chtxt:hover{text-decoration:underline;color:#c9a84c}
+video{width:100%;max-width:480px;background:#000;border-radius:4px;display:block}
+.vshort video{max-width:300px}
+.empty{color:#888;font-style:italic;padding:20px 0}
+.ft{text-align:center;font-size:11px;color:#aaa;padding:20px 0 30px}
+</style>
+</head>
+<body>
+<div class="hd"><h1>Les Vidéos</h1><div class="ed">Le Journal en images</div><div class="navv"><a href="/">← Retour au journal</a></div></div>
+<div class="wp">
+<div id="banner" class="banner __BANNER_CLASS__">__BANNER__</div>
+<div class="lead">Le récapitulatif quotidien de l'édition, en version longue (16:9) et en format court (9:16). Les vidéos restent disponibles en téléchargement.</div>
+<div id="list">__CARDS__</div>
+<div class="ft">Généré automatiquement à partir de l'édition du jour.</div>
+</div>
 <script>
 (function(){
-var C=document.getElementById("content");
-var T=document.getElementById("tabs");
-var E=document.getElementById("edition");
-var tabNames=["une","newsletters","youtube","echecs","techno","immobilier","agenda"];
-var tabLabels=["A la une","Newsletters","YouTube","Échecs","Techno","Immobilier","Agenda"];
-var readItems={};
-var currentTab="une";
-// Load read status from server
-function loadReadStatus(){
-  var x=new XMLHttpRequest();
-  x.open("GET","/api/read-status?_="+Date.now(),true);
-  x.onload=function(){
-    if(x.status===200){
-      try{readItems=JSON.parse(x.responseText)||{}}catch(e){}
+  var box=document.getElementById('list');
+  if(!box) return;
+  var bn=document.getElementById('banner');
+  if(bn&&bn.className.indexOf('on')>=0){setTimeout(function(){location.reload();},30000);}
+  function up(el,cls){
+    while(el&&el.nodeType===1&&(' '+el.className+' ').indexOf(' '+cls+' ')<0){el=el.parentNode;}
+    return (el&&el.nodeType===1)?el:null;
+  }
+  function longBtn(card){return card.querySelector('button[data-src][data-v=""]');}
+  function setOn(card,btn){
+    var all=card.querySelectorAll('.btns button[data-src]');
+    for(var i=0;i<all.length;i++){all[i].className='';}
+    if(btn){btn.className='on';}
+  }
+  function player(card){
+    var wrap=card.querySelector('.player');
+    var v=wrap.querySelector('video');
+    if(!v){v=document.createElement('video');v.controls=true;v.preload='none';wrap.appendChild(v);}
+    return {wrap:wrap,v:v};
+  }
+  function load(p,src,poster,cls){
+    p.wrap.className='player'+(cls||'');
+    if(p.v.getAttribute('src')!==src){
+      p.v.setAttribute('poster',poster||'');
+      p.v.setAttribute('src',src);
+      p.v.load();
     }
+    return p.v;
+  }
+  box.onclick=function(e){
+    var t=e.target||e.window.event;
+    if(t.tagName!=='BUTTON') return;
+    // 1) bouton Version longue / Format court
+    if(t.getAttribute('data-src')){
+      var card=up(t,'card');
+      if(!card) return;
+      setOn(card,t);
+      var p=player(card);
+      load(p,t.getAttribute('data-src'),t.getAttribute('data-poster'),
+           t.getAttribute('data-v')?' vshort':'');
+      try{p.v.play();}catch(err){}
+      return;
+    }
+    // 2) chapitre : charge la version longue si besoin, puis seek
+    var ts=t.getAttribute('data-t');
+    if(ts===null||ts==='') return;
+    var card2=up(t,'card');
+    if(!card2) return;
+    var cb=card2.querySelector('.chapters');
+    if(!cb) return;
+    var p2=player(card2);
+    var v2=load(p2,cb.getAttribute('data-src'),cb.getAttribute('data-poster'),'');
+    setOn(card2,longBtn(card2));
+    var seek=function(){
+      try{v2.currentTime=parseFloat(ts)||0;v2.play();}catch(err){}
+    };
+    if(v2.readyState>=1){seek();}
+    else if(v2.addEventListener){v2.addEventListener('loadedmetadata',seek);}
+    else{v2.onloadedmetadata=seek;}
+    var chs=cb.querySelectorAll('button.ch');
+    for(var j=0;j<chs.length;j++){chs[j].className='ch';}
+    t.className='ch on';
   };
-  x.send();
-}
-loadReadStatus();
-function saveRead(){
-  // Send unread IDs to server
-  var ids=[];
-  for(var k in readItems){if(readItems.hasOwnProperty(k)){ids.push(k)}}
-  if(!ids.length)return;
-  var x=new XMLHttpRequest();
-  x.open("POST","/api/mark-read",true);
-  x.setRequestHeader("Content-Type","application/json");
-  x.send(JSON.stringify({ids:ids}));
-}
-
-function render(data){
-  if(!data||!data.sections){C.innerHTML='<div style="padding:30px;text-align:center;color:#888">Aucune edition disponible</div>';return}
-  E.textContent=(data.edition||"?")+" - "+data.date+" "+data.time;
-  
-  // Tabs
-  var th="";
-  for(var i=0;i<tabNames.length;i++){
-    var n=tabNames[i],l=tabLabels[i];
-    var section=data.sections[n]||[];
-    var count=0;
-    if(n==="une"){count=section.length}else if(n==="agenda"){count=section.length}else{count=typeof section != "undefined" && section !== null && section.length ? section.length : 0}
-    th+='<div class="tab'+(n===currentTab?" active":"")+'" data-tab="'+n+'">'+l+'<span class="badge'+(count>0?" show":"")+'">'+count+'</span></div>';
-  }
-  T.innerHTML=th;
-  
-  // Attach tab click listeners
-  var tabEls=T.querySelectorAll(".tab");
-  for(var ti=0;ti<tabEls.length;ti++){
-    (function(el){tabEls[ti].onclick=function(){switchTab(el)}})(tabEls[ti]);
-  }
-  
-  // Panes
-  var html="";
-  for(var i=0;i<tabNames.length;i++){
-    var n=tabNames[i];
-    html+='<div class="pane'+(n===currentTab?" active":"")+'" id="pane-'+n+'">';
-    if(n==="une"){html+=renderUne(data.sections[n]||[])}
-    else if(n==="newsletters"){html+=renderNewsletter(data.sections[n]||[])}
-    else if(n==="agenda"){html+=renderAgenda(data.sections[n]||[])}
-    else if(n==="immobilier"){html+=renderImmo(data.sections[n]||[])}
-    else{html+=renderList(data.sections[n]||[],n)}
-    html+='</div>';
-  }
-  C.innerHTML=html;
-  buildTicker(data);
-  
-  // Mark tab items as read
-  var activeTab=document.querySelector(".tab.active");
-  if(activeTab)markTabRead(activeTab.dataset.tab);
-}
-
-function renderUne(items){
-  if(!items.length)return '<div style="padding:20px;text-align:center;color:#888">Aucun article a la une</div>';
-  var h="";
-  for(var i=0;i<items.length;i++){
-    var it=items[i];
-    var itemId=it.url||it.title||"item-"+i;
-    var isRead=readItems[itemId];
-    h+='<div class="art'+(isRead?"":" unread")+'">';
-    var typeLabel=it.type;
-    if(it.type==="event-sport"){typeLabel="\\u26BD Sport"}
-    else if(it.type==="event-personal"){typeLabel="\\uD83D\\uDCC5 Agenda"}
-    else if(it.type==="marquante"){typeLabel="\\uD83D\\uDCA1 Marquante"}
-    h+='<div class="src">'+it.source+' <span class="tag tag-'+it.type+'">'+typeLabel+'</span></div>';
-    if(it.type==="crypto-summary"&&it.data){
-      // affichage uniquement dans le ticker
-    }else{
-      h+='<h3>'+(it.url?'<a href="'+it.url+'" target="_blank">':'')+it.title+(it.url?'</a>':'')+'</h3>';
-      if(it.summary)h+='<p>'+it.summary+'</p>';
-      if(it.key_points&&it.key_points.length){
-        h+='<ul class="pts">';
-        for(var p=0;p<it.key_points.length;p++){h+='<li>'+it.key_points[p]+'</li>'}
-        h+='</ul>';
-      }
-    }
-    h+='<div class="meta">'+it.date+(it.author?" | "+it.author:"")+'</div>';
-    h+='</div>';
-  }
-  return h;
-}
-
-function renderList(items,tab){
-  if(!items||!items.length)return '<div style="padding:20px;text-align:center;color:#888">Aucun element</div>';
-  var h="";
-  for(var i=0;i<items.length;i++){
-    var it=items[i];
-    var itemId=it.url||it.title||"item-"+tab+"-"+i;
-    var isRead=readItems[itemId];
-    h+='<div class="art'+(isRead?"":" unread")+'">';
-    h+='<div class="src">'+it.source+'</div>';
-    h+='<h3>'+(it.url?'<a href="'+it.url+'" target="_blank">':'')+it.title+(it.url?'</a>':'')+'</h3>';
-    if(it.summary)h+='<p>'+it.summary+'</p>';
-    if(it.key_points&&it.key_points.length){
-      h+='<ul class="pts">';
-      for(var p=0;p<it.key_points.length;p++){h+='<li>'+it.key_points[p]+'</li>'}
-      h+='</ul>';
-    }
-    if(tab==="newsletters"&&it.articles){
-      for(var a=0;a<it.articles.length;a++){
-        var art=it.articles[a];
-        h+='<div style="margin:6px 0 6px 12px;padding:6px 0;border-bottom:1px solid #f0ede8">';
-        h+='<strong>'+(art.url?'<a href="'+art.url+'" target="_blank">':'')+art.title+(art.url?'</a>':'')+'</strong>';
-        if(art.summary)h+='<p style="font-size:13px;color:#555;margin:2px 0">'+art.summary+'</p>';
-        h+='</div>';
-      }
-    }
-    h+='<div class="meta">'+it.date+(it.author?" | "+it.author:"")+'</div>';
-    h+='</div>';
-  }
-  return h;
-}
-
-function renderAgenda(items){
-  if(!items.length)return '<div style="padding:20px;text-align:center;color:#888">Aucun evenement</div>';
-  var h="";
-  for(var i=0;i<items.length;i++){
-    var it=items[i];
-    var timeStr=it.time?" "+it.time:"";
-    var cal=it.calendar||"Agenda";
-    var tagClass=(it.type||"personal")==="sport"?"tag-event-sport":"tag-event-personal";
-    h+='<div class="agenda-item">';
-    h+='<strong>'+it.date+'</strong>'+timeStr;
-    h+=' <span class="tag '+tagClass+'">'+cal+'</span>';
-    h+=' — '+it.title;
-    h+='</div>';
-  }
-  return h;
-}
-
-function renderImmo(items){
-  if(!items.length)return '<div style="padding:20px;text-align:center;color:#888">Aucune annonce</div>';
-  var h="";
-  for(var i=0;i<items.length;i++){
-    var it=items[i];
-    var itemId=it.url||it.title||"immo-"+i;
-    var isRead=readItems[itemId];
-    h+='<div class="art'+(isRead?"":" unread")+'">';
-    h+='<div class="src">'+it.source+' <span class="tag tag-newsletter">Immo</span></div>';
-    h+='<h3>'+(it.url?'<a href="'+it.url+'" target="_blank">':'')+it.title+(it.url?'</a>':'')+'</h3>';
-    if(it.price||it.surface||it.rooms){
-      h+='<p style="font-size:15px">';
-      if(it.price)h+='<strong>'+Number(it.price).toLocaleString('fr-FR')+' \u20AC</strong> ';
-      if(it.surface)h+=it.surface+' m\u00B2 ';
-      if(it.rooms)h+=it.rooms+' pi\u00E8ces ';
-      h+='</p>';
-    }
-    if(it.features&&it.features.length){
-      h+='<p style="font-size:12px;color:#666">';
-      for(var f=0;f<it.features.length;f++){
-        h+='<span style="display:inline-block;background:#e8f0fe;color:#1967d2;padding:1px 6px;border-radius:3px;margin:2px">'+it.features[f]+'</span> ';
-      }
-      h+='</p>';
-    }
-    h+='<div class="meta">'+it.date+'</div>';
-    h+='</div>';
-  }
-  return h;
-}
-
-function renderNewsletter(items){
-  if(!items.length)return '<div style="padding:20px;text-align:center;color:#888">Aucune newsletter</div>';
-  var h="";
-  for(var i=0;i<items.length;i++){
-    var nl=items[i];
-    var src=nl.source||"Newsletter";
-    h+='<div class="art">';
-    h+='<div class="src">'+src+' <span class="tag tag-newsletter">Newsletter</span></div>';
-    if(nl.articles&&nl.articles.length){
-      for(var a=0;a<nl.articles.length;a++){
-        var art=nl.articles[a];
-        h+='<div style="margin:8px 0;padding:6px 0;border-bottom:1px solid #f0ede8">';
-        h+='<strong>'+(art.url?'<a href="'+art.url+'" target="_blank">':'')+art.title+(art.url?'</a>':'')+'</strong>';
-        if(art.summary)h+='<p style="font-size:13px;color:#555;margin:2px 0">'+art.summary+'</p>';
-        h+='</div>';
-      }
-    }else{
-      h+='<p style="color:#888;font-size:13px">Aucun article dans cette edition</p>';
-    }
-    h+='<div class="meta">'+nl.date+'</div>';
-    h+='</div>';
-  }
-  return h;
-}
-
-function buildTicker(data){
-  var el=document.getElementById("ticker");
-  if(!el)return;
-  var coins=data&&data._ticker;
-  if(!coins||!coins.length){el.textContent="";return}
-  var h="";
-  for(var i=0;i<coins.length;i++){
-    var c=coins[i];
-    var ch=c.change_24h;
-    var hasCh=ch!==null&&ch!==undefined;
-    var cls=hasCh&&ch>=0?"up":"down";
-    var displayCh=hasCh?(ch>=0?"+":"")+ch.toFixed(2)+"%":"N/A";
-    h+='<span class="ticker-item">';
-    h+='<span class="sym">'+c.symbol+'</span>';
-    h+='<span class="pr">$'+c.price.toFixed(2)+'</span>';
-    h+='<span class="ch '+cls+'">'+displayCh+'</span>';
-    h+='<span class="sep">|</span>';
-    h+='</span>';
-  }
-  el.innerHTML=h+h;
-}
-
-function switchTab(el){
-  var tabs=document.querySelectorAll(".tab");
-  for(var t=0;t<tabs.length;t++){tabs[t].classList.remove("active")}
-  var panes=document.querySelectorAll(".pane");
-  for(var p=0;p<panes.length;p++){panes[p].classList.remove("active")}
-  el.classList.add("active");
-  var tabName=el.getAttribute("data-tab");
-  currentTab=tabName;
-  document.getElementById("pane-"+tabName).classList.add("active");
-  markTabRead(tabName);
-}
-
-function markTabRead(tab){
-  var pane=document.getElementById("pane-"+tab);
-  if(!pane)return;
-  var items=pane.querySelectorAll(".art.unread");
-  var changed=false;
-  for(var j=0;j<items.length;j++){
-    var item=items[j];
-    var link=item.querySelector("h3 a");
-    var id=link?link.getAttribute("href"):item.querySelector("h3")?item.querySelector("h3").textContent:"";
-    if(id&&!readItems[id]){readItems[id]=true;changed=true}
-  }
-  if(changed)saveRead();
-}
-
-function refresh(){
-  var x=new XMLHttpRequest();
-  x.open("GET","/api/data?_="+Date.now(),true);
-  x.timeout=10000;
-  x.onload=function(){
-    try{
-      if(x.status!==200){
-        C.innerHTML='<div style="padding:30px;text-align:center;color:#c5221f">Erreur HTTP '+x.status+'</div>';
-        return
-      }
-      var d=JSON.parse(x.responseText);
-      if(d.error){C.innerHTML='<div style="padding:30px;text-align:center;color:#888">'+d.error+'</div>';return}
-      render(d);
-    }catch(e){
-      C.innerHTML='<div style="padding:30px;text-align:center;color:#c5221f">Erreur: '+e.message+'<br><small>'+x.responseText.substring(0,200)+'</small></div>'
-    }
-  };
-  x.onerror=function(){C.innerHTML='<div style="padding:30px;text-align:center;color:#c5221f">Reseau</div>'};
-  x.ontimeout=function(){C.innerHTML='<div style="padding:30px;text-align:center;color:#eab308">Timeout</div>'};
-  x.send();
-}
-refresh();
-setInterval(refresh,60000);
 })();
 </script>
 </body>
 </html>"""
+
+def esc(s):
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+def fmt_size(n):
+    try:
+        n = float(n)
+    except Exception:
+        return ""
+    if n >= 1048576:
+        return "%.1f Mo" % (n / 1048576.0)
+    return "%d Ko" % int(n / 1024)
+
+def fmt_dur(s):
+    try:
+        s = int(round(float(s)))
+    except Exception:
+        return ""
+    m, sec = divmod(s, 60)
+    return "%d min %02d" % (m, sec) if m else "%d s" % sec
+
+def render_chapters(jt, thumb):
+    """Liste de chapitres cliquable sous le lecteur (version longue uniquement)."""
+    chs = jt.get("chapters") or []
+    if not chs:
+        return ""
+    rows = []
+    for c in chs:
+        rows.append('<button class="ch" data-t="%s"><span class="ct">%s</span>%s</button>'
+                    % (esc(c.get("start", 0)), esc(c.get("time", "")), esc(c.get("label", ""))))
+    txt = jt.get("chapters_txt")
+    dl = ('<a class="chtxt" href="/media/%s" download>Chapitres .txt (à coller dans la description YouTube)</a>'
+          % esc(txt)) if txt else ""
+    return ('<div class="chapters" data-src="/media/%s" data-poster="/media/%s">'
+            '<div class="ch-hd">Chapitres</div>%s%s</div>'
+            % (esc(jt.get("web") or jt.get("file") or ""), thumb, "".join(rows), dl))
+
+
+def render_cards(data):
+    vids = data.get("videos") or []
+    if not vids:
+        return '<div class="empty">Aucune vidéo pour le moment. La première sera publiée après la prochaine production.</div>'
+    out = []
+    for v in vids:
+        date = esc(v.get("date", ""))
+        label = esc(v.get("label", date))
+        thumb = esc(v.get("thumb", ""))
+        jt = v.get("jt") or {}
+        sh = v.get("short") or {}
+        title = esc(v.get("title") or label)
+        pieces = []
+        if jt.get("web") or jt.get("file"):
+            pieces.append('<button data-src="/media/%s" data-poster="/media/%s" data-v="">Version longue</button>'
+                          % (esc(jt.get("web") or jt.get("file")), thumb))
+        if sh.get("file"):
+            pieces.append('<button data-src="/media/%s" data-poster="/media/%s" data-v="1">Format court</button>'
+                          % (esc(sh.get("file")), thumb))
+        dls = []
+        if jt.get("file"):
+            dls.append('<a href="/media/%s" download>1080p · %s</a>' % (esc(jt["file"]), fmt_size(jt.get("size"))))
+        if sh.get("file"):
+            dls.append('<a href="/media/%s" download>Short · %s</a>' % (esc(sh["file"]), fmt_size(sh.get("size"))))
+        out.append(
+            '<div class="card">'
+            '<div class="date">%s</div>'
+            '<h2>%s</h2>'
+            '<div class="meta">Version longue %s · Format court %s</div>'
+            '%s'
+            '<div class="btns">%s%s</div>'
+            '<div class="player"></div>'
+            '%s'
+            '</div>' % (
+                date, title,
+                fmt_dur(jt.get("duration")), fmt_dur(sh.get("duration")),
+                ('<img class="thumb" src="/media/%s" alt="Miniature du %s" loading="lazy">' % (thumb, date)) if thumb else "",
+                "".join(pieces), "".join(dls), render_chapters(jt, thumb)))
+    return "\n".join(out)
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -381,9 +288,17 @@ class H(BaseHTTPRequestHandler):
             self._serve_json()
         elif path == "/api/read-status":
             self._serve_read_status()
+        elif path == "/api/videos":
+            self._serve_videos_json()
+        elif path == "/videos":
+            self._serve_videos_page()
+        elif path.startswith("/media/"):
+            self._serve_media(path[len("/media/"):])
+        elif path.startswith("/static/"):
+            self._serve_static(path[len("/static/"):])
         else:
             self._serve_html()
-    
+
     def do_POST(self):
         path = self.path.split("?")[0]
         if path == "/api/mark-read":
@@ -391,13 +306,13 @@ class H(BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
-    
+
     def _json_response(self, data, status=200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
-    
+
     def _serve_json(self):
         fp = os.path.join(BASE, "latest.json")
         if not os.path.exists(fp):
@@ -413,17 +328,132 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(data.encode())
-    
+
+    def _serve_static(self, name):
+        # Strict whitelist; never build the path from raw user input.
+        if name not in STATIC_MIME:
+            self.send_response(404)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"Not Found")
+            return
+        fp = os.path.join(STATIC_DIR, name)
+        if not os.path.isfile(fp):
+            self.send_response(404)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"Not Found")
+            return
+        with open(fp, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", STATIC_MIME[name])
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_videos_json(self):
+        body = json.dumps(load_videos(), ensure_ascii=False).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_videos_page(self):
+        prod = load_production()
+        if prod:
+            label = esc(prod.get("label", ""))
+            bcls = "on"
+            banner = ("<b>Production en cours</b> (démarrée à %s). "
+                      "L'édition du jour s'ajoutera en haut de cette page dans quelques minutes — "
+                      "elle se rafraîchit toute seule." % label)
+        else:
+            bcls = ""
+            banner = ""
+        html = (VIDEOS_PAGE
+                .replace("__BANNER_CLASS__", bcls)
+                .replace("__BANNER__", banner)
+                .replace("__CARDS__", render_cards(load_videos())))
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.end_headers()
+        self.wfile.write(html.encode("utf-8"))
+
+    def _media_abspath(self, rel):
+        """Chemin absolu sur, ou None. Aucune entree utilisateur ne peut sortir de VIDEO_DIR."""
+        if not MEDIA_RE.match(rel or ""):
+            return None
+        root = os.path.realpath(VIDEO_DIR)
+        fp = os.path.realpath(os.path.join(root, rel))
+        if not fp.startswith(root + os.sep):
+            return None
+        return fp if os.path.isfile(fp) else None
+
+    def _serve_media(self, rel):
+        fp = self._media_abspath(rel)
+        if not fp:
+            self.send_response(404)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"Not Found")
+            return
+        ext = fp.rsplit(".", 1)[-1].lower()
+        ctype = MEDIA_MIME.get(ext, "application/octet-stream")
+        size = os.path.getsize(fp)
+        # Support des requetes Range : indispensable pour le seek dans un <video>.
+        start, end = 0, size - 1
+        status = 200
+        rng = self.headers.get("Range")
+        if rng:
+            m = re.match(r"bytes=(\d*)-(\d*)$", rng.strip())
+            if m:
+                if m.group(1):
+                    start = int(m.group(1))
+                    if m.group(2):
+                        end = min(int(m.group(2)), size - 1)
+                elif m.group(2):
+                    start = max(0, size - int(m.group(2)))
+                if start > end or start >= size:
+                    self.send_response(416)
+                    self.send_header("Content-Range", "bytes */%d" % size)
+                    self.end_headers()
+                    return
+                status = 206
+        length = end - start + 1
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        if status == 206:
+            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+        # Pas de cache long : les fichiers sont remplaces chaque jour.
+        self.send_header("Cache-Control", "public, max-age=300")
+        self.end_headers()
+        with open(fp, "rb") as f:
+            f.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = f.read(min(65536, remaining))
+                if not chunk:
+                    break
+                try:
+                    self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                remaining -= len(chunk)
+
     def _serve_html(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.end_headers()
         self.wfile.write(PAGE.encode())
-    
+
     def _serve_read_status(self):
         self._json_response(load_read_status())
-    
+
     def _serve_mark_read(self):
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length)) if length else {}
@@ -438,7 +468,7 @@ class H(BaseHTTPRequestHandler):
                 rs[rid] = datetime.now().isoformat()
         save_read_status(rs)
         self._json_response({"ok": True})
-    
+
     def log_message(self, *a): pass
 
 print("Journal sur http://localhost:{}".format(PORT))
