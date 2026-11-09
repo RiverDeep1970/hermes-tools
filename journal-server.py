@@ -14,6 +14,9 @@ VIDEO_DIR = os.path.expanduser("~/.hermes/video-journal/out")
 VIDEO_INDEX = os.path.expanduser("~/.hermes/video-journal/videos.json")
 VIDEO_STATE = os.path.expanduser("~/.hermes/video-journal/production.json")
 PRODUCTION_MAX_AGE = 45 * 60  # au-dela, l'etat est considere perime (script tue)
+# Nombre d'editions publiees sur le site (la page ET /api/videos). Le disque en
+# garde davantage (voir --keep de update-videos-index.py) : marge de securite.
+SITE_LIMIT = 7
 MEDIA_MIME = {"mp4": "video/mp4", "jpg": "image/jpeg", "png": "image/png",
               "txt": "text/plain; charset=utf-8"}
 # nom de fichier strict : [web/]slug.ext, aucune remontee de chemin possible
@@ -33,6 +36,7 @@ def save_read_status(data):
         json.dump(data, f)
 
 def load_videos():
+    """Index des videos. Ne renvoie que les SITE_LIMIT dernieres editions."""
     if not os.path.exists(VIDEO_INDEX):
         return {"updated": "", "videos": []}
     try:
@@ -40,6 +44,12 @@ def load_videos():
             data = json.load(f)
         if not isinstance(data, dict) or "videos" not in data:
             return {"updated": "", "videos": []}
+        vids = data.get("videos") or []
+        if not isinstance(vids, list):
+            return {"updated": "", "videos": []}
+        if len(vids) > SITE_LIMIT:
+            data = dict(data)
+            data["videos"] = vids[:SITE_LIMIT]
         return data
     except:
         return {"updated": "", "videos": []}
@@ -471,5 +481,8 @@ class H(BaseHTTPRequestHandler):
 
     def log_message(self, *a): pass
 
-print("Journal sur http://localhost:{}".format(PORT))
-HTTPServer(("0.0.0.0", PORT), H).serve_forever()
+
+if __name__ == "__main__":
+    # Importable pour les tests : le serveur ne demarre qu'en execution directe.
+    print("Journal sur http://localhost:{}".format(PORT))
+    HTTPServer(("0.0.0.0", PORT), H).serve_forever()
